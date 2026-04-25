@@ -1,0 +1,336 @@
+# Life Tracker v2 実装ロードマップ (Phase 5 成果物)
+
+Phase 1 範囲 (`spec.md`「Phase 1 で実装する範囲」) を **9 Round** (Round 6 は 6a/6b に分割) に分解する。Round 3 完了で minimum viable (個人運用開始可能)。
+
+各 Round の S 級件数は 3〜5 件 (v1 R10 直列 4 件で機能した規模感)。S 級は **直列**、B/C 級は並列 Wave 可 (`agent-delegation-template.md` 参照)。
+
+---
+
+## 全体方針
+
+- **順序の根拠**: 副作用分離 (`feedback_side_effect_prevention`) と「最小スライスで早く運用開始」の両立。詳細は本ファイル末尾「Round 順序の決定根拠」参照
+- **Round 完了条件**: 当該 Round の Acceptance を全件 OK + 親レビュー (`agent-delegation-template.md` チェックリスト) + ユーザー実機確認 (S 級含む Round のみ)
+- **事前壁打ち**: 各 Round 着手前に選択肢形式で再壁打ち (`feedback_re_walkthrough_before_implementation`)。QA 粒度は構造に影響する論点のみ (`feedback_qa_granularity_for_implementation_round`)
+- **規約発火タイミング**: Round 1 は D-4 / D-5 のみ。Round 2 以降は A / B / C / E 全規約発火 (`structural-conventions.md` 「規約発火タイミング」表)。`CLAUDE.md` は「Round 1-2」一括表記だが、本ロードマップでは Round 1 / 2 に細分化 (Round 2 から View 規約発火)
+- **磨き込み Round (Round 8) は機能 Round と分離**: `feedback_polish_vs_feature_cadence` に従い S 級採用は 5-7 件上限
+
+---
+
+## Round 一覧
+
+| Round | スコープ | S 級件数 | 状態 |
+|-------|---------|---------|-----|
+| 1 | DB 基盤 + DayBuilder pure function | 3 | 未着手 |
+| 2 | 当日表示 (read-only、Round 3 用 slot 確保) | 3 | 未着手 |
+| 3 | actual 記録 (チェックイン + サブ入力) | 3 | 未着手 ← **minimum viable** |
+| 4 | pattern 切替 / day_meta | 3 | 未着手 |
+| 5 | 過去日表示 (read-only) | 3 | 未着手 |
+| 6a | テンプレ管理 UI + exdate 編集 | 3 | 未着手 |
+| 6b | パターン・カテゴリ管理 UI | 4 | 未着手 |
+| 7 | 個別実体編集 (E-A / F-A 3 択) | 4 | 未着手 |
+| 8 | 磨き込み + α | S 級 5-7 件上限 / B-C 主体 | 未着手 |
+
+---
+
+## Round 1: DB 基盤 + DayBuilder pure function
+
+**目的**: 物理基盤と pure ロジックの最下層を構築。UI 着手前にユニットテストで検証可能にする。
+
+**スコープ**:
+- DDL 投入: `domain-model.md` の v15 全 DDL (`category` / `task_template` / `task_template_exdate` / `pattern` / `pattern_template_membership` / `scheduled_task` / `actual_task` / `day_meta` / `gym_actual_input` / `sleep_actual_input`)
+- 祝日チェッカー実装 (JST、Phase 1 期間中に発生する全祝日を hardcode テーブルでカバー。`domain-model.md` 持ち越し論点「祝日ライブラリの確定」は Phase 2 持ち越し)
+- DayBuilder pure function (`domain-model.md` 入力契約に従う)
+- DataLoader / Repository スケルトン
+
+**S 級内訳**:
+- S-DB-1: migration `0001_initial.sql` (全 DDL + index + partial unique + CHECK)
+- S-Pure-1: DayBuilder + DayBuilderContext + DayTask 拡張 (現在ブロック特定 / origin 識別)
+- S-Pure-2: DataLoader / Repository (テンプレ / パターン / scheduled / actual / day_meta フェッチ + 当該日 scoping)
+
+**Acceptance**:
+- [ ] supabase に migration 適用済 (`mcp__supabase-personal__list_tables` / `list_migrations` で確認)
+- [ ] DayBuilder ユニットテスト pass:
+  - [ ] rrule デフォルト合成 (平日 / 土日 / 祝日)
+  - [ ] pattern overlay (overflow 込み) — **全置換セマンティクス**
+  - [ ] exdate 除外 (`task_template_exdate`)
+  - [ ] scheduled_task 実体優先 (B-X 由来識別 + 編集済み実体固定)
+  - [ ] DayMembership 判定 (primary / spillover / overflow)
+- [ ] DayBuilder 出力拡張:
+  - [ ] **`Day.currentBlock(at: Date) -> DayTask?`** API 提供 (spillover 抑制規約付き、`feedback_derived_state_no_transition_event` 適用)
+  - [ ] **`DayTask.origin` enum (`rrule | pattern | manual`) 付与** — Round 7 の F-A 3 択 / 2 択判定で必要
+- [ ] 祝日 hardcode テーブルが Phase 1 期間中の全祝日 (2026-04-26 着手以降の予定運用期間) をカバー
+- [ ] 初期データ投入 (MCP 経由で平日 / 休日 pattern を最低 1 セット手動 INSERT) → DayBuilder で当日 Day 構造体が正しく合成
+
+**規約発火**: D-4 (DB 層: plan/actual 完全独立) / D-5 (DayBuilder 入力契約)
+
+**View 規約は未発火**: 親レビューで grep 0 件 hit でも「規約準拠 OK」と誤判定しない (`CLAUDE.md` Round 別の規約参照範囲)
+
+---
+
+## Round 2: 当日表示 (read-only、Round 3 用 slot 確保)
+
+**目的**: 「今日のスケジュールを見る」UX を完成。書き込み機能なし。**Round 3 の書き込み機能差し込み用 slot を Round 2 で確保**することで、Round 3 着手時に Round 2 の View 構造を再修正しない (副作用分離)。
+
+**スコープ**:
+- HomeView (当日 read-only)
+- DayBuilder の出力 Day を時刻順表示
+- 現在ブロックハイライト (`Day.currentBlock(at:)` 利用、Round 1 提供)
+- pattern バッジ (rrule デフォルト = 「デフォルト」表示 / pattern 適用済 = pattern 名表示。Round 4 まで切替不可)
+- ClockTick (1 分 timer、`scenePhase` で起動 / 停止、`feedback_swift_singleton_timer_bootstrap` 適用)
+- **Round 3 用 slot**: HomeView 内に `CheckInActionLayer` (Round 2 では空 View) を構造として配置、Round 3 で中身を実装する形にする
+
+**S 級内訳**:
+- S-Pure-1: TodayDataLoader (Round 1 DataLoader を当日 scoping で wrap、Singleton timer 起動連携)
+- S-View-1: HomeView 構造 + Day 表示 + `CheckInActionLayer` slot (空 View)
+- S-View-2: 現在ブロックカード (時刻ベースハイライト)
+
+**Acceptance**:
+- [ ] アプリ起動 → 今日のスケジュールが時刻順に表示
+- [ ] 現在時刻のブロックがハイライト (色 / 枠で識別可能)
+- [ ] pattern バッジが正しく表示 (rrule 由来時 = 「デフォルト」)
+- [ ] 1 分後に表示が自動更新 (clockTick 動作、`scenePhase` で停止 / 再開)
+- [ ] `CheckInActionLayer` が HomeView 内に構造として配置済 (空 View でも grep で確認可能)
+
+**規約発火**: A / B / C-1〜C-8 / E (View 着手 Round から発火)
+
+---
+
+## Round 3: actual 記録 (minimum viable)
+
+**目的**: 「予定をやった / やらなかった」を記録できるようにする。**ここで個人運用開始可能**。
+
+**Round 2 で確保した `CheckInActionLayer` slot に書き込み機能を差し込む**。HomeView 自体の structural な変更は最小化。
+
+**スコープ**:
+- actual_task 作成 / 完了 / スキップ / 削除
+- チェックイン UI (タップで完了マーク) → `CheckInActionLayer` に実装
+- gym / sleep サブ入力 sheet (`category.sub_input_kind` 分岐)
+- 予実差分の即時反映 (DayBuilder 再計算)
+
+**S 級内訳**:
+- S-Pure-1: ActualService (UPSERT + サブ入力分岐、`feedback_upsert_side_effects` 適用 = 部分 UPDATE / フィールド別分離)
+- S-View-1: CheckInActionLayer 実装 (Round 2 slot 差し替え)
+- S-View-2: SubInputSheet (gym / sleep 切り替え + 入力)
+
+**Acceptance**:
+- [ ] 当日タスクをタップで完了マーク → actual_task INSERT
+- [ ] gym / sleep ブロックでサブ入力 → 対応する `*_actual_input` INSERT
+- [ ] 予実差分が表示 (scheduled の上に actual を重ね、未完 / 完了が一目で識別可能)
+- [ ] 削除すると actual_task が DB から消える
+- [ ] サブ入力種別 (`category.sub_input_kind`) が `gym|sleep` 以外のカテゴリではサブ入力 sheet が出ない
+- [ ] HomeView の View 構造は Round 2 から変更されていない (CheckInActionLayer 内部のみ変更、grep で structural-conventions.md A-1〜A-6 違反なし確認)
+
+### Round 3 で minimum viable とする意思決定根拠
+
+Round 1〜3 期間中 (Round 4 完了まで推定 2〜3 週間) は土日も平日と同じ予定が表示され、平日タスクが「missed 表示」される副作用が発生する。本人運用シナリオでは以下の理由で **許容**:
+- 個人ツールであり (`project_life_tracker_positioning`)、見た目の違和感は本人が把握していれば運用可能
+- Round 4 (pattern 切替) を最優先で続けることで違和感期間を短縮 (磨き Round 化しない)
+- 「土日は missed 抑制 flag を category 側で持つ」等の最小回避策は副作用分離原則に反する (Round 3 のスコープを超え、後続 Round の前提を壊す可能性)
+
+Round 3 完了 → Round 4 着手まで間を空けない運用とする。
+
+**規約発火**: D-4 (UI 層: plan/actual 結合発火) / A / B / C / E
+
+---
+
+## Round 4: pattern 切替 / day_meta
+
+**目的**: 「今日は休日パターン」「今日は何もしない」操作を完成。
+
+**スコープ**:
+- DayMetaSheet (pattern 選択 / 「何もしない日」/「デフォルトに戻す」)
+- 切替時の scheduled_task 全置換セマンティクス (`domain-model.md` 「day_meta upsert / scheduled_task 一括削除の運用」)
+- day_meta バッジの当日反映
+
+**S 級内訳**:
+- S-Pure-1: PatternApplyService (day_meta upsert + scheduled_task 削除 / 全置換、`feedback_upsert_side_effects` 適用 = 部分 UPDATE)
+- S-View-1: DayMetaSheet UI
+- S-View-2: バッジ統合 (HomeView)
+
+**Acceptance**:
+- [ ] 当日に pattern 切替 → scheduled_task が pattern membership に置き換わる (DB 直接確認: `mcp__supabase-personal__execute_sql` で `SELECT * FROM scheduled_task WHERE start_at AT TIME ZONE 'Asia/Tokyo' BETWEEN ...`)
+- [ ] 「何もしない日」 → scheduled_task 0 件 + day_meta `applied_pattern_id IS NULL` で記録
+- [ ] 「デフォルトに戻す」 → day_meta 削除 + scheduled_task 全削除 → rrule デフォルト復帰
+- [ ] バッジで「ユーザー操作済み日」が一目で分かる
+- [ ] 切替前に actual_task が存在する場合、actual は保持される (D-4: DB 層完全独立検証、`mcp__supabase-personal__execute_sql` で actual_task 行の保持を確認)
+
+**規約発火**: 同上
+
+---
+
+## Round 5: 過去日表示 (read-only)
+
+**目的**: 履歴を振り返れるようにする。
+
+**スコープ**:
+- 日付ナビゲーション (前日 / 翌日 / カレンダー UI)
+- 過去日 read-only HomeView
+- 過去日の scheduled_task / actual_task / day_meta 取得
+- 未来日は範囲外 (`spec.md` Phase 1 範囲外、UI 上で押下不可 or グレーアウト)
+- **`isReadOnly` 横断機能の導入**: 環境値 (`@Environment`) または View modifier として導入し、Round 7 編集 UI を当日 / 過去日で共通化する際に再利用可能にする (`structural-conventions.md` C-5 適用)
+- ClockTick 停止: 過去日表示中は ClockTick を停止 (`scenePhase` 起動条件 + `selectedDate == today` を AND 条件化)
+
+**S 級内訳**:
+- S-Pure-1: PastDayLoader (date 指定フェッチ、当該日 scoping)
+- S-View-1: 日付ナビゲーション UI
+- S-View-2: PastDayHomeView (read-only 派生 + `isReadOnly` 横断機能導入)
+
+**Acceptance**:
+- [ ] 過去日を選択 → その日のスケジュール / 実績が見える
+- [ ] 編集 UI が出ない (`isReadOnly` 経由で抑制)
+- [ ] 過去日 pattern バッジが正しい
+- [ ] 未来日は押下不可 or 表示しない
+- [ ] 過去日表示中に ClockTick が停止 (実機で 2 分以上経過観察 / または Singleton state 確認)
+- [ ] 過去日タップ時にサブ入力 sheet / 編集 sheet が出ない (実機確認)
+- [ ] structural-conventions.md C-5 (read-only 横断引数) / C-2 (情報移譲時の過去日対応) 違反なし (親レビュー grep)
+
+**規約発火**: 同上 + 過去日 read-only 規約 (主: C-5、従: C-2)
+
+---
+
+## Round 6a: テンプレ管理 UI + exdate 編集
+
+**目的**: テンプレ追加 / 編集 / 削除 / exdate 編集をアプリ内で完結させる。
+
+**スコープ**:
+- TemplateListView / TemplateEditView (rrule 編集含む)
+- exdate 編集 UI (テンプレから除外日追加)
+
+**S 級内訳**:
+- S-Pure-1: TemplateService (CRUD + exdate 操作)
+- S-View-1: TemplateListView + TemplateEditView
+- S-View-2: ExdateEditView
+
+**Acceptance**:
+- [ ] アプリ内でテンプレ CRUD ができる (rrule 編集含む)
+- [ ] exdate 追加 / 削除ができる
+- [ ] ON DELETE RESTRICT が効いて、参照中の `template_id` を持つテンプレは削除不可 (UI 側でエラー表示)
+- [ ] 削除 RESTRICT エラーが UI から識別可能 (Round 1-5 期間中は MCP レスポンスで表面化していた挙動を UI 表示化)
+
+**規約発火**: 同上
+
+---
+
+## Round 6b: パターン・カテゴリ管理 UI
+
+**目的**: パターン追加 / 編集 / 削除 / membership 編集 / カテゴリ管理をアプリ内で完結させる。
+
+**スコープ**:
+- PatternListView / PatternEditView (membership 編集)
+- CategoryEditView (Settings 配下に配置)
+
+**S 級内訳**:
+- S-Pure-1: PatternService / CategoryService (CRUD)
+- S-View-1: PatternListView + PatternEditView (membership 含む)
+- S-View-2: CategoryEditView (Settings 配下)
+- S-View-3: 設定画面ハブ (Settings View、CategoryEditView の親)
+
+**Acceptance**:
+- [ ] アプリ内でパターン CRUD ができる (membership 編集含む)
+- [ ] カテゴリ追加 / sub_input_kind 切り替えができる
+- [ ] ON DELETE RESTRICT が効いて、参照中の `pattern_id` / `category_id` を持つパターン / カテゴリは削除不可 (UI 側でエラー表示)
+- [ ] Settings View から CategoryEditView 動線到達可能
+
+**規約発火**: 同上
+
+---
+
+## Round 7: 個別実体編集 (E-A / F-A 3 択)
+
+**目的**: 「特定の日だけ予定を変える」「特定の予定だけ削除する」UX を完成。
+
+**スコープ**:
+- 当日 scheduled_task をタップで編集 → 編集済み実体固定 (E-A、`domain-model.md` 「個別タスク編集 / 追加」)
+- 削除 3 択ダイアログ (この日のみ / 今日以降 / 全て削除、`domain-model.md` 「タスク削除の意味論 (F-A 採用)」)
+- 仮想タスク → 物理 INSERT 化のフロー (Round 1 で付与した `DayTask.origin` enum で由来分岐)
+- 影響範囲計算 (今日以降 = exdate 一括追加 / 全て = template 削除 + RESTRICT 制約に応じた scheduled_task 処理)
+
+**S 級内訳**:
+- S-Pure-1: EditService (E-A 編集済み実体固定、仮想 → 物理 INSERT)
+- S-Pure-2: DeleteService (F-A 3 択 → exdate 操作 / template 削除)
+- S-View-1: TaskEditSheet
+- S-View-2: DeleteDialog (3 択 + 影響範囲プレビュー)
+
+**Acceptance**:
+- [ ] 仮想タスクをタップで編集 → 当日のみ反映、翌日以降は元のテンプレに従う
+- [ ] 削除 3 択が `DayTask.origin` で正しく分岐 (rrule = 3 択 / pattern = 2 択 / manual = 1 択)
+- [ ] 「今日以降」削除 → 今日以降の exdate に template_id を一括追加
+- [ ] 「全て削除」 → template が消え、参照中の scheduled_task は ON DELETE RESTRICT でエラー (or 事前に scheduled_task を全削除する UX)
+- [ ] pattern 由来タスクは 2 択 (この日のみ / pattern から外す)
+- [ ] **Round 4 リグレッション**: pattern 切替 / 「何もしない日」/「デフォルトに戻す」が全件再現可能 (実機 + DB 確認)
+
+**規約発火**: 同上 + F-A 削除セマンティクス
+
+---
+
+## Round 8: 磨き込み + α
+
+**目的**: Round 1-7 で見送った微修正を集約。年数回 / 機能節目のみ実施 (`feedback_polish_vs_feature_cadence`)。
+
+**スコープ (確定後)**:
+- ビジュアル磨き込み (色 / 余白 / タイポ)
+- アクセシビリティ
+- リグレッション一掃
+- rrule 編集 UI の UX 詰め (曜日チェック / N 日おきプリセット等、Round 6a で最低限実装した分の磨き)
+- 過去日ヒートマップ / リング等のモチベーション仕掛け (`feedback_motivation_ui`、要件確定後)
+
+**運用**: B/C 級主体。**S 級採用は 5-7 件上限** (`feedback_polish_vs_feature_cadence`)。超過する場合は Round 8 を分割。
+
+---
+
+## Round 順序の決定根拠
+
+### 論点 1: pattern 切替 (Round 4) の位置
+
+- **採用 (Round 3 後)**: actual 単体検証 → pattern 追加。副作用分離 (`feedback_side_effect_prevention`)
+- 不採用 (Round 3 統合): Round 3 が S 級 5-7 件に肥大、actual と pattern の副作用が混ざる
+- 不採用 (Round 2 直後): actual 不在で pattern 切替 = 「切替えても記録できない」中途半端
+
+Round 1〜3 期間中の cosmetic 違和感 (土日も平日と同じ予定が表示) は許容 (Round 3 意思決定根拠参照)。Round 4 で解消。
+
+### 論点 2: テンプレ管理 UI (Round 6a/6b) を後回し
+
+- **採用 (Round 6a/6b)**: Round 1〜5 期間中は MCP 直 INSERT で運用 (`reference_supabase_accounts` の personal MCP)。Round 6 を 6a (テンプレ + exdate) / 6b (パターン + カテゴリ) に分割し各 3〜4 件に収める
+- 不採用 (Round 2 前): read-only より前に CRUD UI が出るのは構造的に違和感
+- 不採用 (Phase 2 持ち越し): 個人運用なら MCP で耐えられるが、本人運用継続性のため Phase 1 内に含める
+
+**ON DELETE RESTRICT の挙動について**: Round 1 DDL 投入時点で `template_id` / `pattern_id` / `category_id` の RESTRICT が効くため、Round 1〜5 期間中に MCP 経由でテンプレ削除を試みれば RESTRICT エラーが MCP レスポンスとして返る (= 想定通り、本人が把握していれば許容)。Round 6a/6b で UI 表示化する。
+
+### 論点 3: 個別実体編集 (Round 7) の独立性
+
+- **採用 (Round 7 集約)**: E-A / F-A は仮想実体 → 物理 INSERT 化のフローで独自の検証点が多く、事前壁打ち対象が大きい
+- 不採用 (Round 3 統合): Round 3 が 6+ 件で肥大
+
+Round 7 は Round 4 の PatternApplyService と同じ DB 領域 (`scheduled_task` 全置換 / 一括削除) を触るため、Round 7 Acceptance に Round 4 リグレッション項目を必須化。
+
+---
+
+## Phase 2 以降の持ち越し (再掲)
+
+`spec.md` および `domain-model.md` 「Phase 2 以降の持ち越し」と一致 (出典項目別):
+
+`spec.md` 由来:
+- Apple Watch / Live Activity / Dynamic Island
+- HealthKit 連携 (sleep_actual_input INSERT、endDate + 18:00 境界)
+- Mac mini サーバー連携 (`project_mac_mini_server`)
+- iCalendar export / EventKit 同期
+- learning_actual_input (PMBOK 計画統合の要件確定後)
+- 未来日表示 / 未来日 pattern プレビュー
+
+`domain-model.md` 由来:
+- 祝日ライブラリの確定 (Round 1 は hardcode 簡易実装)
+- actual_task の派生元 (`source_template_id`)
+- iCalendar export 時の pattern → VEVENT 翻訳方針
+- HealthKit sleep の DayMembership 別ロジック注入
+- EventKit / Google からのインポート時の RECURRENCE-ID マッピング
+- iCalendar export 時の DTSTART 変換
+
+---
+
+## 関連ドキュメント
+
+- `docs/spec.md` — v2 コア定義 / Phase 計画
+- `docs/domain-model.md` — DDL / データモデル原則 / DayBuilder 入力契約 / Phase 2 持ち越し論点
+- `docs/structural-conventions.md` — 構造規約 / 規約発火タイミング
+- `docs/agent-delegation-template.md` — Agent 依頼テンプレ / 親レビューチェックリスト / ユーザー実機確認依頼テンプレ
+- `CLAUDE.md` — 起動時ルール / Round 別の規約参照範囲

@@ -91,7 +91,7 @@ v2 ではコアの解像度を上げてから実装に入る。スコープ判�
 | 2 | 技術スタック確定 (SwiftUI + Supabase 継続) | 完了 (2026-04-26) |
 | 3 | リポジトリ + Supabase 配置 (`~/dev/life-tracker/`、既存 Supabase 再利用 + 全削除) | 完了 (2026-04-26) |
 | 4 | docs/ への仕様書化 (本ファイル群) | 完了 (2026-04-26) |
-| 5 | 実装ロードマップ策定 (Round 構成 / 最小スライス) | 未着手 |
+| 5 | 実装ロードマップ策定 (Round 構成 / 最小スライス) | 完了 (2026-04-26) — `docs/implementation-roadmap.md` 参照 |
 
 ### Phase 1 で実装する範囲
 
@@ -103,6 +103,7 @@ v2 ではコアの解像度を上げてから実装に入る。スコープ判�
   - pattern 切替シート / 「何もしない日」/「デフォルトに戻す」操作
   - tasks の追加 / 編集 / 削除 (F-A 3 択ダイアログ含む)
   - day_meta バッジ (ユーザー操作済み日のマーカー)
+  - **テンプレ / パターン / カテゴリ管理 UI** (CRUD、exdate 編集含む。本人運用継続のため Phase 1 内で必要)
   - 未来日表示は **Phase 1 範囲外** (pattern 編集後の波及確認は当日 + 過去日のみで運用)
 
 ### Phase 2 以降の持ち越し
@@ -121,4 +122,5 @@ v2 ではコアの解像度を上げてから実装に入る。スコープ判�
 - `docs/domain-model.md` — v15 DDL、データモデル原則、パターン適用方式、DayBuilder
 - `docs/structural-conventions.md` — SwiftUI View 階層・情報アーキテクチャ規約 (v1 から継承)
 - `docs/agent-delegation-template.md` — Agent 依頼時のプロンプトテンプレ
+- `docs/implementation-roadmap.md` — Phase 5 成果物。Round 構成 / Acceptance / 順序根拠
 - `~/dev/life-tracker-archive/` — v1 リードオンリー保持 (Round 4-10 経緯参照可)
