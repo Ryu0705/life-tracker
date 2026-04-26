@@ -40,8 +40,8 @@ Phase 1 範囲 (`spec.md`「Phase 1 で実装する範囲」) を **9 Round** (R
 
 | # | 論点 | 確定 |
 |---|-----|-----|
-| 1 | Xcode プロジェクト構成 | **単一 app target + `Sources/{Models, Services, DayBuilder, Views}` + `Tests/LifeTrackerTests`**。マルチターゲット分割は不採用 (個人開発規模で overkill)。サブディレクトリは Round 進行に応じて追加可 (例: `Sources/Views/Home/`、`Sources/Services/Sync/`)、初期 4 ディレクトリは固定 |
-| 2 | 祝日ライブラリ | **`JapaneseHoliday` SwiftPackage 採用** (Phase 2 持ち越しから Round 1 に昇格)。`DayBuilderContext.holidayChecker` に注入 (注入例: `holidayChecker: { date in JapaneseHoliday.isHoliday(date) }`、具体 API は SwiftPackage 採用版に従う)。hardcode テーブル案は祝日改訂時の手動更新リスク + Phase 1 期間 4-6 ヶ月でも本人運用上の信頼性が下がるため却下、内閣府 CSV 直読み案は parser コスト + キャッシュ設計の追加発生で却下 |
+| 1 | Xcode プロジェクト構成 | **単一 app target + `Sources/{Models, Services, DayBuilder, Views}` + `LifeTrackerTests`**。マルチターゲット分割は不採用 (個人開発規模で overkill)。サブディレクトリは Round 進行に応じて追加可 (例: `Sources/Views/Home/`、`Sources/Services/Sync/`)、初期 4 ディレクトリは固定 |
+| 2 | 祝日ライブラリ | **`HolidayJp` SwiftPackage (`holiday-jp/holiday_jp-swift`) 採用** (Phase 2 持ち越しから Round 1 に昇格)。`DayBuilderContext.holidayChecker` に注入 (注入例: `holidayChecker: { date in HolidayJp.isHoliday(date) }`、具体 API は SwiftPackage 採用版に従う)。hardcode テーブル案は祝日改訂時の手動更新リスク + Phase 1 期間 4-6 ヶ月でも本人運用上の信頼性が下がるため却下、内閣府 CSV 直読み案は parser コスト + キャッシュ設計の追加発生で却下 |
 | 3 | DayDataSource / Service 抽象化 | **D 中間案: `DayDataSource` service-level protocol のみ** (entity 別 protocol なし)。`SupabaseDayDataSource` (本番) と `MockDayDataSource` (テスト) の 2 実装で DayBuilder ユニットテストの注入点を確保。entity 別 protocol は Phase 2 で data source 差替え (HealthKit 等) が発生したタイミングで切り出し。**Round 3 以降の write 系 (actual UPSERT / scheduled 一括削除 / template 等 CRUD) は `DayDataSource` を拡張するか別 service protocol を切り出すかを Round 3 着手前に再決定する (Phase 2 持ち越しではなく Phase 1 内で発生する別軸)** |
 | 4 | Migration 運用 | **`mcp__supabase-personal__apply_migration` only** (Supabase CLI 不採用)。本人 1 環境前提、CLI セットアップコスト削減。**Round 5 完了 = 本人実運用開始以降の DDL 変更は `mcp__supabase-personal__create_branch` で branch 検証してから main 適用に運用切替** (実データを抱えた本番 DB 直叩きを避ける) |
 
@@ -50,7 +50,7 @@ Phase 1 範囲 (`spec.md`「Phase 1 で実装する範囲」) を **9 Round** (R
 **スコープ**:
 - Xcode プロジェクト初期化 (単一 target + 上記ディレクトリ構造)
 - DDL 投入: `domain-model.md` の v15 全 DDL (`category` / `task_template` / `task_template_exdate` / `pattern` / `pattern_template_membership` / `scheduled_task` / `actual_task` / `day_meta` / `gym_actual_input` / `sleep_actual_input`)
-- 祝日チェッカー: `JapaneseHoliday` SwiftPackage を SPM 依存に追加、`DayBuilderContext.holidayChecker` クロージャ内で呼び出し
+- 祝日チェッカー: `HolidayJp` SwiftPackage を SPM 依存に追加、`DayBuilderContext.holidayChecker` クロージャ内で呼び出し
 - DayBuilder pure function (`domain-model.md` 入力契約に従う)
 - `DayDataSource` protocol + `SupabaseDayDataSource` 実装 + `MockDayDataSource` 実装 (テンプレ / パターン / scheduled / actual / day_meta フェッチ + 当該日 scoping)
 
@@ -60,11 +60,11 @@ Phase 1 範囲 (`spec.md`「Phase 1 で実装する範囲」) を **9 Round** (R
 - S-Pure-2: `DayDataSource` protocol + `SupabaseDayDataSource` (Supabase Swift SDK で実装) + `MockDayDataSource` (テスト用、固定データ返却)
 
 **Acceptance**:
-- [ ] Xcode プロジェクトが `Sources/{Models, Services, DayBuilder, Views}` + `Tests/LifeTrackerTests` 構造で生成済 (`xcodeproj` ファイル + 各ディレクトリ存在)
-- [ ] `JapaneseHoliday` SwiftPackage が Xcode の Package Dependencies に追加済 (`grep -r "JapaneseHoliday" *.xcodeproj/project.pbxproj` で確認可能)
+- [ ] Xcode プロジェクトが `Sources/{Models, Services, DayBuilder, Views}` + `LifeTrackerTests` 構造で生成済 (`xcodeproj` ファイル + 各ディレクトリ存在)
+- [ ] `HolidayJp` SwiftPackage が Xcode の Package Dependencies に追加済 (`grep -r "HolidayJp" *.xcodeproj/project.pbxproj` で確認可能)
 - [ ] supabase に migration 適用済 (`mcp__supabase-personal__list_tables` / `list_migrations` で確認)
 - [ ] DayBuilder ユニットテスト pass (`MockDayDataSource` 経由):
-  - [ ] rrule デフォルト合成 (平日 / 土日 / 祝日 — 祝日ケースは元日 2027-01-01・建国記念の日 2027-02-11 等、Phase 1 期間 (2026-04-26〜) に到来する祝日 2-3 件で `JapaneseHoliday` 実日付検証)
+  - [ ] rrule デフォルト合成 (平日 / 土日 / 祝日 — 祝日ケースは元日 2027-01-01・建国記念の日 2027-02-11 等、Phase 1 期間 (2026-04-26〜) に到来する祝日 2-3 件で `HolidayJp` 実日付検証)
   - [ ] pattern overlay (overflow 込み) — **全置換セマンティクス**
   - [ ] exdate 除外 (`task_template_exdate`)
   - [ ] scheduled_task 実体優先 (B-X 由来識別 + 編集済み実体固定)

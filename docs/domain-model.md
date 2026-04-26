@@ -299,14 +299,14 @@ struct DayBuilderContext {
   let dayMeta: DayMeta?                          // 当該日のもの (なければ nil)
   let scheduledTasks: [ScheduledTask]            // 当該日に overlap するもの
   let actualTasks: [ActualTask]                  // 当該日に overlap するもの
-  let holidayChecker: (Date) -> Bool             // 祝日判定 (`JapaneseHoliday` SwiftPackage 注入。Round 1 で確定)
+  let holidayChecker: (Date) -> Bool             // 祝日判定 (`HolidayJp` SwiftPackage 注入。Round 1 で確定)
   let calendar: Calendar                         // JST で初期化
   // Phase 2 以降:
   // let sleepDayAttribution: SleepAttributionRule  // HealthKit 同型 endDate + 18:00 境界
 }
 ```
 
-- 祝日判定は関数注入でライブラリ依存を分離 (`JapaneseHoliday` SwiftPackage、DB テーブル持たない。Round 1 で確定)
+- 祝日判定は関数注入でライブラリ依存を分離 (`HolidayJp` SwiftPackage、DB テーブル持たない。Round 1 で確定)
 - `memberships` / `exdates` は当該日に必要なものに **Service 層で絞り込んでから** Builder へ渡す。Builder 内で全件 filter する設計は採らない (fetch コスト最小化 + Builder の責務を「合成」に限定)
 
 ---
