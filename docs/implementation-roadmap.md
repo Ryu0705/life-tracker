@@ -36,21 +36,35 @@ Phase 1 範囲 (`spec.md`「Phase 1 で実装する範囲」) を **9 Round** (R
 
 **目的**: 物理基盤と pure ロジックの最下層を構築。UI 着手前にユニットテストで検証可能にする。
 
-**スコープ**:
-- DDL 投入: `domain-model.md` の v15 全 DDL (`category` / `task_template` / `task_template_exdate` / `pattern` / `pattern_template_membership` / `scheduled_task` / `actual_task` / `day_meta` / `gym_actual_input` / `sleep_actual_input`)
-- 祝日チェッカー実装 (JST、Phase 1 期間中に発生する全祝日を hardcode テーブルでカバー。`domain-model.md` 持ち越し論点「祝日ライブラリの確定」は Phase 2 持ち越し)
-- DayBuilder pure function (`domain-model.md` 入力契約に従う)
-- DataLoader / Repository スケルトン
+**着手前事前壁打ち確定事項** (2026-04-26、memory `project_life_tracker_v2_core` 参照):
 
-**S 級内訳**:
-- S-DB-1: migration `0001_initial.sql` (全 DDL + index + partial unique + CHECK)
+| # | 論点 | 確定 |
+|---|-----|-----|
+| 1 | Xcode プロジェクト構成 | **単一 app target + `Sources/{Models, Services, DayBuilder, Views}` + `Tests/LifeTrackerTests`**。マルチターゲット分割は不採用 (個人開発規模で overkill) |
+| 2 | 祝日ライブラリ | **`JapaneseHoliday` SwiftPackage 採用** (Phase 2 持ち越しから Round 1 に昇格)。`DayBuilderContext.holidayChecker` に注入。hardcode テーブル案は祝日改訂時の手動更新リスク + Phase 1 期間 4-6 ヶ月でも本人運用上の信頼性が下がるため却下、内閣府 CSV 直読み案は parser コスト + キャッシュ設計の追加発生で却下 |
+| 3 | Repository / Service 抽象化 | **D 中間案: `DayDataSource` service-level protocol のみ** (entity 別 protocol なし)。`SupabaseDayDataSource` (本番) と `MockDayDataSource` (テスト) の 2 実装で DayBuilder ユニットテストの注入点を確保。entity 別 protocol は Phase 2 で data source 差替え (HealthKit 等) が発生したタイミングで切り出し。**Round 3 以降の write 系 (actual UPSERT / scheduled 一括削除 / template 等 CRUD) は `DayDataSource` を拡張するか別 service protocol を切り出すかを Round 3 着手前に再決定する (Phase 2 持ち越しではなく Phase 1 内で発生する別軸)** |
+| 4 | Migration 運用 | **`mcp__supabase-personal__apply_migration` only** (Supabase CLI 不採用)。本人 1 環境前提、CLI セットアップコスト削減。**Round 5 完了 = 本人実運用開始以降の DDL 変更は `mcp__supabase-personal__create_branch` で branch 検証してから main 適用に運用切替** (実データを抱えた本番 DB 直叩きを避ける) |
+
+判断根拠詳細 (B 案 → 仕様変更耐久性指摘 → 2 種類分解 → D 中間案着地) は memory `feedback_change_durability_decompose` 参照。
+
+**スコープ**:
+- Xcode プロジェクト初期化 (単一 target + 上記ディレクトリ構造)
+- DDL 投入: `domain-model.md` の v15 全 DDL (`category` / `task_template` / `task_template_exdate` / `pattern` / `pattern_template_membership` / `scheduled_task` / `actual_task` / `day_meta` / `gym_actual_input` / `sleep_actual_input`)
+- 祝日チェッカー: `JapaneseHoliday` SwiftPackage を SPM 依存に追加、`DayBuilderContext.holidayChecker` クロージャ内で呼び出し
+- DayBuilder pure function (`domain-model.md` 入力契約に従う)
+- `DayDataSource` protocol + `SupabaseDayDataSource` 実装 + `MockDayDataSource` 実装 (テンプレ / パターン / scheduled / actual / day_meta フェッチ + 当該日 scoping)
+
+**S 級内訳** (依存順序: S-DB-1 と S-Pure-1 (Mock 注入) は並列可、S-Pure-2 の Supabase 実装は S-DB-1 完了後):
+- S-DB-1: migration `0001_initial.sql` (全 DDL + index + partial unique + CHECK) を MCP `apply_migration` で適用
 - S-Pure-1: DayBuilder + DayBuilderContext + DayTask 拡張 (現在ブロック特定 / origin 識別)
-- S-Pure-2: DataLoader / Repository (テンプレ / パターン / scheduled / actual / day_meta フェッチ + 当該日 scoping)
+- S-Pure-2: `DayDataSource` protocol + `SupabaseDayDataSource` (Supabase Swift SDK で実装) + `MockDayDataSource` (テスト用、固定データ返却)
 
 **Acceptance**:
+- [ ] Xcode プロジェクトが `Sources/{Models, Services, DayBuilder, Views}` + `Tests/LifeTrackerTests` 構造で生成済 (`xcodeproj` ファイル + 各ディレクトリ存在)
+- [ ] `JapaneseHoliday` SwiftPackage が Xcode の Package Dependencies に追加済 (`grep -r "JapaneseHoliday" *.xcodeproj/project.pbxproj` で確認可能)
 - [ ] supabase に migration 適用済 (`mcp__supabase-personal__list_tables` / `list_migrations` で確認)
-- [ ] DayBuilder ユニットテスト pass:
-  - [ ] rrule デフォルト合成 (平日 / 土日 / 祝日)
+- [ ] DayBuilder ユニットテスト pass (`MockDayDataSource` 経由):
+  - [ ] rrule デフォルト合成 (平日 / 土日 / 祝日 — 祝日ケースは元日 2027-01-01・建国記念の日 2027-02-11 等、Phase 1 期間 (2026-04-26〜) に到来する祝日 2-3 件で `JapaneseHoliday` 実日付検証)
   - [ ] pattern overlay (overflow 込み) — **全置換セマンティクス**
   - [ ] exdate 除外 (`task_template_exdate`)
   - [ ] scheduled_task 実体優先 (B-X 由来識別 + 編集済み実体固定)
@@ -58,8 +72,8 @@ Phase 1 範囲 (`spec.md`「Phase 1 で実装する範囲」) を **9 Round** (R
 - [ ] DayBuilder 出力拡張:
   - [ ] **`Day.currentBlock(at: Date) -> DayTask?`** API 提供 (spillover 抑制規約付き、`feedback_derived_state_no_transition_event` 適用)
   - [ ] **`DayTask.origin` enum (`rrule | pattern | manual`) 付与** — Round 7 の F-A 3 択 / 2 択判定で必要
-- [ ] 祝日 hardcode テーブルが Phase 1 期間中の全祝日 (2026-04-26 着手以降の予定運用期間) をカバー
-- [ ] 初期データ投入 (MCP 経由で平日 / 休日 pattern を最低 1 セット手動 INSERT) → DayBuilder で当日 Day 構造体が正しく合成
+- [ ] `DayDataSource` protocol が定義され、`SupabaseDayDataSource` / `MockDayDataSource` の 2 実装が存在 (grep で 1 protocol + 2 conformance 確認可能)
+- [ ] 初期データ投入 (MCP 経由で平日 / 休日 pattern を最低 1 セット手動 INSERT) → `SupabaseDayDataSource` 経由で DayBuilder で当日 Day 構造体が正しく合成
 
 **規約発火**: D-4 (DB 層: plan/actual 完全独立) / D-5 (DayBuilder 入力契約)
 
@@ -80,7 +94,7 @@ Phase 1 範囲 (`spec.md`「Phase 1 で実装する範囲」) を **9 Round** (R
 - **Round 3 用 slot**: HomeView 内に `CheckInActionLayer` (Round 2 では空 View) を構造として配置、Round 3 で中身を実装する形にする
 
 **S 級内訳**:
-- S-Pure-1: TodayDataLoader (Round 1 DataLoader を当日 scoping で wrap、Singleton timer 起動連携)
+- S-Pure-1: TodayDataLoader (Round 1 `DayDataSource` を当日 scoping で wrap、Singleton timer 起動連携)
 - S-View-1: HomeView 構造 + Day 表示 + `CheckInActionLayer` slot (空 View)
 - S-View-2: 現在ブロックカード (時刻ベースハイライト)
 
@@ -318,7 +332,6 @@ Round 7 は Round 4 の PatternApplyService と同じ DB 領域 (`scheduled_task
 - 未来日表示 / 未来日 pattern プレビュー
 
 `domain-model.md` 由来:
-- 祝日ライブラリの確定 (Round 1 は hardcode 簡易実装)
 - actual_task の派生元 (`source_template_id`)
 - iCalendar export 時の pattern → VEVENT 翻訳方針
 - HealthKit sleep の DayMembership 別ロジック注入

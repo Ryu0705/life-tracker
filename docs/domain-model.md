@@ -299,14 +299,14 @@ struct DayBuilderContext {
   let dayMeta: DayMeta?                          // 当該日のもの (なければ nil)
   let scheduledTasks: [ScheduledTask]            // 当該日に overlap するもの
   let actualTasks: [ActualTask]                  // 当該日に overlap するもの
-  let holidayChecker: (Date) -> Bool             // 祝日判定 (Swift OSS ライブラリで注入)
+  let holidayChecker: (Date) -> Bool             // 祝日判定 (`JapaneseHoliday` SwiftPackage 注入。Round 1 で確定)
   let calendar: Calendar                         // JST で初期化
   // Phase 2 以降:
   // let sleepDayAttribution: SleepAttributionRule  // HealthKit 同型 endDate + 18:00 境界
 }
 ```
 
-- 祝日判定は関数注入でライブラリ依存を分離 (`JapaneseHoliday` 等の Swift OSS、DB テーブル持たない)
+- 祝日判定は関数注入でライブラリ依存を分離 (`JapaneseHoliday` SwiftPackage、DB テーブル持たない。Round 1 で確定)
 - `memberships` / `exdates` は当該日に必要なものに **Service 層で絞り込んでから** Builder へ渡す。Builder 内で全件 filter する設計は採らない (fetch コスト最小化 + Builder の責務を「合成」に限定)
 
 ---
@@ -492,10 +492,6 @@ Phase 1 設計では塞いでいないが、Phase 2 着手前に方針を決め�
 - 内部表現は `task_template.start_minutes_from_midnight + duration_minutes` (相対)
 - RFC 5545 DTSTART は rrule の最初の発生日
 - export 時に「rrule 評価で得た最初の発生日 + start_minutes」で `DTSTART` を生成
-
-### 祝日ライブラリの確定
-
-- `JapaneseHoliday` 等の例示のみ。Phase 5 着手前に採用ライブラリ + バージョン + 内閣府 CSV 連携の有無を decision として確定し本ドキュメントに追記
 
 ### actual_task の派生元 (source_template_id)
 
