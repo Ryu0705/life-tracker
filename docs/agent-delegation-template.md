@@ -12,6 +12,7 @@ v1 で確立した運用ルール (Round 10 で実証済) を v2 に継承。
 - **S 級は 1 件ずつ直列**: 並列 Wave に投げない (構造規約の暗黙前提は Wave 跨ぎで伝播しない)
 - **親レビュー必須**: Agent の BUILD SUCCEEDED 報告のみで次に進まない。Round 別 grep (`structural-conventions.md` 末尾) で構造規約違反を目視確認
 - **実機確認はユーザー依頼**: Agent には実機確認を期待しない (idb は arch 判定バグあり、simctl も install のみ使用)
+- **親直接実行時も同じ規律**: 構造変更 / ドメイン判断 / 設計整合性タスクは Agent 委譲せず親が直接実装する (`feedback_delegate_to_subagents`)。その場合も擬似コード + 規約引用 + 影響範囲を事前に書き出す → BUILD 確認 → 規約 grep で自己レビュー、と Agent 委譲時と同じプロセスを踏む。本テンプレ各節の「設計確定」「実装要件」「報告内容」は親自身に対するチェックリストとしても使う
 
 ---
 
@@ -69,7 +70,7 @@ ALTER TABLE ... | CREATE TABLE ... | CREATE INDEX ...
 
 ## S-Pure 級テンプレ (DayBuilder / Service / pure function)
 
-副作用なしの関数 / 構造体 / Service 実装で使う。DayBuilder 構築、Repository / Service 層追加、計算ロジック実装等。
+副作用なしの関数 / 構造体 / Service 実装で使う。DayBuilder 構築、Service / DayDataSource 層追加、計算ロジック実装等。
 
 ```
 ## タスク: <件名>

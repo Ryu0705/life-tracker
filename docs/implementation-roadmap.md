@@ -40,8 +40,8 @@ Phase 1 範囲 (`spec.md`「Phase 1 で実装する範囲」) を **9 Round** (R
 
 | # | 論点 | 確定 |
 |---|-----|-----|
-| 1 | Xcode プロジェクト構成 | **単一 app target + `Sources/{Models, Services, DayBuilder, Views}` + `Tests/LifeTrackerTests`**。マルチターゲット分割は不採用 (個人開発規模で overkill) |
-| 2 | 祝日ライブラリ | **`JapaneseHoliday` SwiftPackage 採用** (Phase 2 持ち越しから Round 1 に昇格)。`DayBuilderContext.holidayChecker` に注入。hardcode テーブル案は祝日改訂時の手動更新リスク + Phase 1 期間 4-6 ヶ月でも本人運用上の信頼性が下がるため却下、内閣府 CSV 直読み案は parser コスト + キャッシュ設計の追加発生で却下 |
+| 1 | Xcode プロジェクト構成 | **単一 app target + `Sources/{Models, Services, DayBuilder, Views}` + `Tests/LifeTrackerTests`**。マルチターゲット分割は不採用 (個人開発規模で overkill)。サブディレクトリは Round 進行に応じて追加可 (例: `Sources/Views/Home/`、`Sources/Services/Sync/`)、初期 4 ディレクトリは固定 |
+| 2 | 祝日ライブラリ | **`JapaneseHoliday` SwiftPackage 採用** (Phase 2 持ち越しから Round 1 に昇格)。`DayBuilderContext.holidayChecker` に注入 (注入例: `holidayChecker: { date in JapaneseHoliday.isHoliday(date) }`、具体 API は SwiftPackage 採用版に従う)。hardcode テーブル案は祝日改訂時の手動更新リスク + Phase 1 期間 4-6 ヶ月でも本人運用上の信頼性が下がるため却下、内閣府 CSV 直読み案は parser コスト + キャッシュ設計の追加発生で却下 |
 | 3 | Repository / Service 抽象化 | **D 中間案: `DayDataSource` service-level protocol のみ** (entity 別 protocol なし)。`SupabaseDayDataSource` (本番) と `MockDayDataSource` (テスト) の 2 実装で DayBuilder ユニットテストの注入点を確保。entity 別 protocol は Phase 2 で data source 差替え (HealthKit 等) が発生したタイミングで切り出し。**Round 3 以降の write 系 (actual UPSERT / scheduled 一括削除 / template 等 CRUD) は `DayDataSource` を拡張するか別 service protocol を切り出すかを Round 3 着手前に再決定する (Phase 2 持ち越しではなく Phase 1 内で発生する別軸)** |
 | 4 | Migration 運用 | **`mcp__supabase-personal__apply_migration` only** (Supabase CLI 不採用)。本人 1 環境前提、CLI セットアップコスト削減。**Round 5 完了 = 本人実運用開始以降の DDL 変更は `mcp__supabase-personal__create_branch` で branch 検証してから main 適用に運用切替** (実データを抱えた本番 DB 直叩きを避ける) |
 
@@ -72,7 +72,8 @@ Phase 1 範囲 (`spec.md`「Phase 1 で実装する範囲」) を **9 Round** (R
 - [ ] DayBuilder 出力拡張:
   - [ ] **`Day.currentBlock(at: Date) -> DayTask?`** API 提供 (spillover 抑制規約付き、`feedback_derived_state_no_transition_event` 適用)
   - [ ] **`DayTask.origin` enum (`rrule | pattern | manual`) 付与** — Round 7 の F-A 3 択 / 2 択判定で必要
-- [ ] `DayDataSource` protocol が定義され、`SupabaseDayDataSource` / `MockDayDataSource` の 2 実装が存在 (grep で 1 protocol + 2 conformance 確認可能)
+- [ ] `DayDataSource` protocol が定義され、`SupabaseDayDataSource` / `MockDayDataSource` の 2 実装が存在 (`grep -rn "protocol DayDataSource" Sources/` で 1 件 + `grep -rn ": DayDataSource" Sources/` で 2 件 hit)
+- [ ] `MockDayDataSource` に DayBuilder ユニットテスト用の fixture (平日 / 土日 / 祝日 / pattern 適用日 / exdate 除外日 を網羅、上記テストケース駆動) が定義済
 - [ ] 初期データ投入 (MCP 経由で平日 / 休日 pattern を最低 1 セット手動 INSERT) → `SupabaseDayDataSource` 経由で DayBuilder で当日 Day 構造体が正しく合成
 
 **規約発火**: D-4 (DB 層: plan/actual 完全独立) / D-5 (DayBuilder 入力契約)
