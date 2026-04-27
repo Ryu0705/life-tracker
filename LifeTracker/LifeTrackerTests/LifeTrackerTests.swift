@@ -52,7 +52,7 @@ struct DayBuilderTests {
             durationMinutes: 30,
             rrule: nil
         )
-        self.patternHoliday = Pattern(id: UUID(), name: "祝日", applyDay: .Holiday)
+        self.patternHoliday = Pattern(id: UUID(), name: "祝日", applyDay: .holiday)
         self.patternRemote = Pattern(id: UUID(), name: "在宅日", applyDay: nil)
     }
 
@@ -324,5 +324,101 @@ struct DayBuilderTests {
         #expect(day.currentBlock(at: date(2026, 4, 27, 12)) == nil)
         #expect(day.currentBlock(at: date(2026, 4, 27, 10))?.task.id == walk.id)
         #expect(day.currentBlock(at: date(2026, 4, 27, 5)) == nil)
+    }
+
+    // MARK: - T12: DayMembership.overflow
+
+    @Test("T12: 当日 22:00 → 翌 02:00 の task は当日に overflow、visibleRange = 22:00-翌 00:00 JST")
+    func membershipOverflow() {
+        let nightOwl = ScheduledTask(
+            id: UUID(),
+            name: "深夜作業",
+            categoryId: categoryFood,
+            startAt: date(2026, 4, 27, 22),
+            endAt: date(2026, 4, 28, 2),
+            templateId: nil,
+            patternId: nil
+        )
+        let context = makeContext(scheduledTasks: [nightOwl])
+        let day = DayBuilder.build(date: date(2026, 4, 27), context: context)
+
+        #expect(day.scheduled.count == 1)
+        let item = day.scheduled[0]
+        if case .overflow(let to) = item.membership {
+            #expect(to == date(2026, 4, 28))
+        } else {
+            Issue.record("expected .overflow but got \(item.membership)")
+        }
+        #expect(item.visibleRange.start == date(2026, 4, 27, 22))
+        #expect(item.visibleRange.end == date(2026, 4, 28))
+    }
+
+    // MARK: - T13: TaskOrigin.manual
+
+    @Test("T13: template_id / pattern_id 共に nil の手動 scheduled_task は origin .manual")
+    func originManual() {
+        let manual = ScheduledTask(
+            id: UUID(),
+            name: "突発ミーティング",
+            categoryId: categoryFood,
+            startAt: date(2026, 4, 27, 14),
+            endAt: date(2026, 4, 27, 15),
+            templateId: nil,
+            patternId: nil
+        )
+        let context = makeContext(scheduledTasks: [manual])
+        let day = DayBuilder.build(date: date(2026, 4, 27), context: context)
+
+        #expect(day.scheduled.count == 1)
+        #expect(day.scheduled[0].origin == .manual)
+    }
+
+    // MARK: - T14: Mode.doNothing
+
+    @Test("T14: dayMeta レコードあり + appliedPatternId nil の日は rrule template も出さない (空きの日)")
+    func doNothingDay() {
+        let dayMeta = DayMeta(date: date(2026, 4, 27), appliedPatternId: nil)
+        let context = makeContext(
+            templates: [templateBreakfast],
+            dayMeta: dayMeta
+        )
+        let day = DayBuilder.build(date: date(2026, 4, 27), context: context)
+        #expect(day.scheduled.isEmpty)
+    }
+
+    // MARK: - T15: dayMeta が祝日判定より優先
+
+    @Test("T15: 祝日かつ dayMeta(在宅 pattern) が指定されていれば dayMeta 側が勝つ")
+    func dayMetaOverridesHoliday() {
+        let dayMeta = DayMeta(date: date(2027, 1, 1), appliedPatternId: patternRemote.id)
+        let context = makeContext(
+            templates: [templateBreakfast, templateNewYearGreeting, templateRemoteMorning],
+            patterns: [patternHoliday, patternRemote],
+            memberships: [
+                PatternTemplateMembership(patternId: patternHoliday.id, templateId: templateNewYearGreeting.id),
+                PatternTemplateMembership(patternId: patternRemote.id, templateId: templateRemoteMorning.id)
+            ],
+            dayMeta: dayMeta,
+            holidayDates: [date(2027, 1, 1)]
+        )
+        let day = DayBuilder.build(date: date(2027, 1, 1), context: context)
+
+        #expect(day.scheduled.count == 1)
+        let item = day.scheduled[0]
+        #expect(item.task.name == "在宅 morning")
+        #expect(item.task.patternId == patternRemote.id)
+    }
+
+    // MARK: - T16: virtual ID deterministic
+
+    @Test("T16: 同じ template_id + start_at で 2 回 build しても virtual scheduled の id は一致")
+    func virtualIdDeterministic() {
+        let context = makeContext(templates: [templateBreakfast])
+        let day1 = DayBuilder.build(date: date(2026, 4, 27), context: context)
+        let day2 = DayBuilder.build(date: date(2026, 4, 27), context: context)
+
+        #expect(day1.scheduled.count == 1)
+        #expect(day2.scheduled.count == 1)
+        #expect(day1.scheduled[0].task.id == day2.scheduled[0].task.id)
     }
 }

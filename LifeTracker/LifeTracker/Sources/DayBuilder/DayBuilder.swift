@@ -74,7 +74,7 @@ enum DayBuilder {
         }
 
         if context.holidayChecker(dayStart) {
-            if let holidayPattern = context.patterns.first(where: { $0.applyDay == .Holiday }) {
+            if let holidayPattern = context.patterns.first(where: { $0.applyDay == .holiday }) {
                 return .pattern(holidayPattern.id)
             }
             return .normal
@@ -91,13 +91,13 @@ enum DayBuilder {
 
     private static func applyDayFromWeekday(_ weekday: Int) -> Pattern.ApplyDay? {
         switch weekday {
-        case 1: return .Sunday
-        case 2: return .Monday
-        case 3: return .Tuesday
-        case 4: return .Wednesday
-        case 5: return .Thursday
-        case 6: return .Friday
-        case 7: return .Saturday
+        case 1: return .sunday
+        case 2: return .monday
+        case 3: return .tuesday
+        case 4: return .wednesday
+        case 5: return .thursday
+        case 6: return .friday
+        case 7: return .saturday
         default: return nil
         }
     }
