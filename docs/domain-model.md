@@ -398,6 +398,10 @@ struct Day {
   let date: Date
   let scheduled: [DayTask]
   let actual: [DayTask]
+
+  // 時刻ベース判定。半開区間 [start, end) で評価し、spillover は対象外。
+  // Swift 標準 DateInterval.contains(_:) の閉区間 [start, end] とは挙動が異なる点に注意。
+  func currentBlock(at moment: Date) -> DayTask? { ... }
 }
 
 enum DayBuilder {
