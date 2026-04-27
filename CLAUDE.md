@@ -24,7 +24,10 @@ S級 (構造変更を伴う) タスクは以下を厳守:
 B/C 級 (局所修正) は並列 Wave で可。同一ファイルの編集は直列化。
 
 ## BUILD / 検証
-- BUILD: `xcodebuild -scheme LifeTracker -destination 'platform=iOS Simulator,name=iPhone 17'`
+- BUILD: `xcodebuild -project LifeTracker.xcodeproj -scheme LifeTracker -destination 'platform=iOS Simulator,name=iPhone 17' -configuration Debug build`
+- TEST (ユニットテストのみ): `xcodebuild test -project LifeTracker.xcodeproj -scheme LifeTracker -destination 'platform=iOS Simulator,name=iPhone 17' -configuration Debug -only-testing:LifeTrackerTests`
+  - cwd は `LifeTracker/` (xcodeproj のあるディレクトリ)
+  - `-only-testing:LifeTrackerTests` を付けないと UI Tests も走り 3 分弱かかる
 - インストール: `xcrun simctl install booted <app>` (idb は arch 判定バグありのため install には使わない)
 - UI 操作確認: idb は `screen` / `describe` / `tap` のみ使用可。詳細は memory `feedback_ios_app_verification_idb.md`
 
