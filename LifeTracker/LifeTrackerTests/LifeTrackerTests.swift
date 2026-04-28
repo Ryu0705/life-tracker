@@ -74,7 +74,9 @@ struct DayBuilderTests {
         patterns: [Pattern] = [],
         memberships: [PatternTemplateMembership] = [],
         exdates: [TemplateExdate] = [],
+        previousExdates: [TemplateExdate] = [],
         dayMeta: DayMeta? = nil,
+        previousDayMeta: DayMeta? = nil,
         scheduledTasks: [ScheduledTask] = [],
         actualTasks: [ActualTask] = [],
         holidayDates: [Date] = []
@@ -88,7 +90,9 @@ struct DayBuilderTests {
             patterns: patterns,
             memberships: memberships,
             exdates: exdates,
+            previousExdates: previousExdates,
             dayMeta: dayMeta,
+            previousDayMeta: previousDayMeta,
             scheduledTasks: scheduledTasks,
             actualTasks: actualTasks,
             holidayChecker: checker,
@@ -420,5 +424,181 @@ struct DayBuilderTests {
         #expect(day1.scheduled.count == 1)
         #expect(day2.scheduled.count == 1)
         #expect(day1.scheduled[0].task.id == day2.scheduled[0].task.id)
+    }
+
+    // MARK: - T17: FREQ=DAILY rrule (前日 + 当日 両方が DAILY マッチ → 各日 spillover + overflow)
+
+    @Test("T17: FREQ=DAILY の rrule は曜日に依らず毎日マッチ。当日には前日 spillover + 当日 overflow の 2 件出る")
+    func rruleDailyMatchesEveryDay() {
+        let templateSleep = TaskTemplate(
+            id: UUID(),
+            name: "睡眠",
+            categoryId: categorySleep,
+            startMinutesFromMidnight: 23 * 60,
+            durationMinutes: 8 * 60,
+            rrule: "FREQ=DAILY"
+        )
+        let context = makeContext(templates: [templateSleep])
+
+        for target in [date(2026, 4, 27), date(2026, 4, 25), date(2026, 4, 26)] {
+            let day = DayBuilder.build(date: target, context: context)
+            #expect(day.scheduled.count == 2, "expected 2 sleep instances on \(target)")
+            #expect(day.scheduled.allSatisfy { $0.task.templateId == templateSleep.id })
+
+            let spillover = day.scheduled.first { item in
+                if case .spillover = item.membership { return true } else { return false }
+            }
+            let overflow = day.scheduled.first { item in
+                if case .overflow = item.membership { return true } else { return false }
+            }
+            #expect(spillover != nil, "expected a spillover instance on \(target)")
+            #expect(overflow != nil, "expected an overflow instance on \(target)")
+        }
+    }
+
+    // MARK: - T18a: 前日 FREQ=DAILY virtual の spillover 合成
+
+    @Test("T18a: 前日 FREQ=DAILY 睡眠は当日に spillover として、当日同 rrule は overflow として、計 2 件出る")
+    func previousDayDailySpillover() {
+        let templateSleep = TaskTemplate(
+            id: UUID(),
+            name: "睡眠",
+            categoryId: categorySleep,
+            startMinutesFromMidnight: 23 * 60,
+            durationMinutes: 8 * 60,
+            rrule: "FREQ=DAILY"
+        )
+        let context = makeContext(templates: [templateSleep])
+        let day = DayBuilder.build(date: date(2026, 4, 28), context: context)
+
+        #expect(day.scheduled.count == 2)
+
+        let spillover = day.scheduled.first { item in
+            if case .spillover = item.membership { return true } else { return false }
+        }
+        let overflow = day.scheduled.first { item in
+            if case .overflow = item.membership { return true } else { return false }
+        }
+
+        #expect(spillover != nil)
+        if case .spillover(let from) = spillover?.membership {
+            #expect(from == date(2026, 4, 27))
+        }
+        #expect(spillover?.task.templateId == templateSleep.id)
+        #expect(spillover?.task.name == "睡眠")
+        #expect(spillover?.origin == .rrule)
+        #expect(spillover?.visibleRange.start == date(2026, 4, 28))
+        #expect(spillover?.visibleRange.end == date(2026, 4, 28, 7))
+
+        #expect(overflow != nil)
+        if case .overflow(let to) = overflow?.membership {
+            #expect(to == date(2026, 4, 29))
+        }
+        #expect(overflow?.task.templateId == templateSleep.id)
+        #expect(overflow?.visibleRange.start == date(2026, 4, 28, 23))
+        #expect(overflow?.visibleRange.end == date(2026, 4, 29))
+    }
+
+    // MARK: - T18b: 前日編集済 entity が前日 virtual spillover を抑制
+
+    @Test("T18b: 前日 22:30 → 当日 6:30 の編集済 entity があれば、前日 virtual spillover は出さず entity のみ表示")
+    func previousDayEntityOverridesVirtualSpillover() {
+        let templateSleep = TaskTemplate(
+            id: UUID(),
+            name: "睡眠",
+            categoryId: categorySleep,
+            startMinutesFromMidnight: 23 * 60,
+            durationMinutes: 8 * 60,
+            rrule: "FREQ=DAILY"
+        )
+        let edited = ScheduledTask(
+            id: UUID(),
+            name: "編集済睡眠",
+            categoryId: categorySleep,
+            startAt: date(2026, 4, 27, 22, 30),
+            endAt: date(2026, 4, 28, 6, 30),
+            templateId: templateSleep.id,
+            patternId: nil
+        )
+        let context = makeContext(templates: [templateSleep], scheduledTasks: [edited])
+        let day = DayBuilder.build(date: date(2026, 4, 28), context: context)
+
+        let spillovers = day.scheduled.filter { item in
+            if case .spillover = item.membership { return true } else { return false }
+        }
+        #expect(spillovers.count == 1)
+        #expect(spillovers.first?.task.id == edited.id)
+        #expect(spillovers.first?.task.name == "編集済睡眠")
+
+        // 当日 overflow は出る (templateSleep 当日 virtual = 当日 23:00 → 翌 7:00)
+        let overflows = day.scheduled.filter { item in
+            if case .overflow = item.membership { return true } else { return false }
+        }
+        #expect(overflows.count == 1)
+        #expect(overflows.first?.task.templateId == templateSleep.id)
+    }
+
+    // MARK: - T18c: 前日 dayMeta(doNothing) で前日 virtual spillover が出ない
+
+    @Test("T18c: 前日 dayMeta(appliedPatternId=nil) は doNothing → 前日 virtual spillover は出ず、当日 overflow のみ")
+    func previousDayDoNothingSuppressesSpillover() {
+        let templateSleep = TaskTemplate(
+            id: UUID(),
+            name: "睡眠",
+            categoryId: categorySleep,
+            startMinutesFromMidnight: 23 * 60,
+            durationMinutes: 8 * 60,
+            rrule: "FREQ=DAILY"
+        )
+        let prevMeta = DayMeta(date: date(2026, 4, 27), appliedPatternId: nil)
+        let context = makeContext(
+            templates: [templateSleep],
+            previousDayMeta: prevMeta
+        )
+        let day = DayBuilder.build(date: date(2026, 4, 28), context: context)
+
+        let spillovers = day.scheduled.filter { item in
+            if case .spillover = item.membership { return true } else { return false }
+        }
+        #expect(spillovers.isEmpty)
+
+        let overflows = day.scheduled.filter { item in
+            if case .overflow = item.membership { return true } else { return false }
+        }
+        #expect(overflows.count == 1)
+        #expect(overflows.first?.task.templateId == templateSleep.id)
+    }
+
+    // MARK: - T18d: 前日が祝日 pattern の場合、pattern membership に乗る template の spillover が出る
+
+    @Test("T18d: 前日が祝日 (日曜祝日) で休日 pattern が template_sleep を含むなら、当日に origin=.pattern の spillover が出る")
+    func previousDayHolidayPatternSpillover() {
+        let templateSleep = TaskTemplate(
+            id: UUID(),
+            name: "睡眠",
+            categoryId: categorySleep,
+            startMinutesFromMidnight: 23 * 60,
+            durationMinutes: 8 * 60,
+            rrule: nil
+        )
+        // 前日 = 2027-05-04 (火) を祝日扱いにする (実祝日: みどりの日)
+        let context = makeContext(
+            templates: [templateSleep],
+            patterns: [patternHoliday],
+            memberships: [PatternTemplateMembership(patternId: patternHoliday.id, templateId: templateSleep.id)],
+            holidayDates: [date(2027, 5, 4)]
+        )
+        // 当日 = 2027-05-05 (水) は祝日扱いにしない
+        let day = DayBuilder.build(date: date(2027, 5, 5), context: context)
+
+        let spillovers = day.scheduled.filter { item in
+            if case .spillover = item.membership { return true } else { return false }
+        }
+        #expect(spillovers.count == 1)
+        #expect(spillovers.first?.task.templateId == templateSleep.id)
+        #expect(spillovers.first?.origin == .pattern)
+        #expect(spillovers.first?.task.patternId == patternHoliday.id)
+        #expect(spillovers.first?.visibleRange.start == date(2027, 5, 5))
+        #expect(spillovers.first?.visibleRange.end == date(2027, 5, 5, 7))
     }
 }

@@ -4,31 +4,72 @@ import CryptoKit
 enum DayBuilder {
     static func build(date: Date, context: DayBuilderContext) -> Day {
         let dayStart = context.calendar.startOfDay(for: date)
-        guard let dayEnd = context.calendar.date(byAdding: .day, value: 1, to: dayStart) else {
+        guard let dayEnd = context.calendar.date(byAdding: .day, value: 1, to: dayStart),
+              let previousDayStart = context.calendar.date(byAdding: .day, value: -1, to: dayStart) else {
             return Day(date: dayStart, scheduled: [], actual: [])
         }
 
-        let mode = resolveMode(date: dayStart, context: context)
-        let virtualScheduled = composeVirtual(mode: mode, dayStart: dayStart, context: context)
+        let todayMode = resolveMode(dayStart: dayStart, dayMeta: context.dayMeta, context: context)
+        let previousMode = resolveMode(dayStart: previousDayStart, dayMeta: context.previousDayMeta, context: context)
+
+        let todaySeeds = composeVirtualSeeds(
+            mode: todayMode,
+            dayStart: dayStart,
+            exdates: context.exdates,
+            context: context
+        )
+        let previousSeeds = composeVirtualSeeds(
+            mode: previousMode,
+            dayStart: previousDayStart,
+            exdates: context.previousExdates,
+            context: context
+        )
+
+        let virtualScheduled: [DayScheduledTask] = (todaySeeds + previousSeeds).compactMap { seed in
+            guard let (membership, visibleRange) = computeMembership(
+                startAt: seed.task.startAt,
+                endAt: seed.task.endAt,
+                dayStart: dayStart,
+                dayEnd: dayEnd,
+                calendar: context.calendar
+            ) else {
+                return nil
+            }
+            return DayScheduledTask(
+                task: seed.task,
+                membership: membership,
+                visibleRange: visibleRange,
+                origin: seed.origin
+            )
+        }
+
         let scheduledFromEntities = collectScheduledEntities(
             dayStart: dayStart,
             dayEnd: dayEnd,
             context: context
         )
 
-        let editedTemplateIdsOnDate = Set(
-            scheduledFromEntities.compactMap { dayTask -> UUID? in
-                guard let templateId = dayTask.task.templateId else { return nil }
-                let startInJST = dayTask.task.startAt
-                let scheduledDay = context.calendar.startOfDay(for: startInJST)
-                guard scheduledDay == dayStart else { return nil }
-                return templateId
-            }
+        let editedOnDate = editedTemplateIds(
+            entities: scheduledFromEntities,
+            targetDayStart: dayStart,
+            calendar: context.calendar
+        )
+        let editedOnPreviousDay = editedTemplateIds(
+            entities: scheduledFromEntities,
+            targetDayStart: previousDayStart,
+            calendar: context.calendar
         )
 
         let virtualFiltered = virtualScheduled.filter { dayTask in
             guard let templateId = dayTask.task.templateId else { return true }
-            return !editedTemplateIdsOnDate.contains(templateId)
+            let sourceDay = context.calendar.startOfDay(for: dayTask.task.startAt)
+            if sourceDay == dayStart {
+                return !editedOnDate.contains(templateId)
+            } else if sourceDay == previousDayStart {
+                return !editedOnPreviousDay.contains(templateId)
+            } else {
+                return true
+            }
         }
 
         let mergedScheduled = (scheduledFromEntities + virtualFiltered)
@@ -64,8 +105,12 @@ enum DayBuilder {
         case normal
     }
 
-    private static func resolveMode(date dayStart: Date, context: DayBuilderContext) -> Mode {
-        if let dayMeta = context.dayMeta {
+    private static func resolveMode(
+        dayStart: Date,
+        dayMeta: DayMeta?,
+        context: DayBuilderContext
+    ) -> Mode {
+        if let dayMeta = dayMeta {
             if let appliedPatternId = dayMeta.appliedPatternId {
                 return .pattern(appliedPatternId)
             } else {
@@ -102,13 +147,19 @@ enum DayBuilder {
         }
     }
 
-    // MARK: - Virtual composition
+    // MARK: - Virtual seed composition (membership 計算なし)
 
-    private static func composeVirtual(
+    private struct VirtualSeed {
+        let task: ScheduledTask
+        let origin: TaskOrigin
+    }
+
+    private static func composeVirtualSeeds(
         mode: Mode,
         dayStart: Date,
+        exdates: [TemplateExdate],
         context: DayBuilderContext
-    ) -> [DayScheduledTask] {
+    ) -> [VirtualSeed] {
         switch mode {
         case .doNothing:
             return []
@@ -119,9 +170,10 @@ enum DayBuilder {
                 .map { $0.templateId }
             let templates = context.templates.filter { templateIds.contains($0.id) }
             return templates.compactMap { template in
-                makeVirtual(
+                makeVirtualSeed(
                     template: template,
                     dayStart: dayStart,
+                    exdates: exdates,
                     context: context,
                     origin: .pattern,
                     patternId: patternId
@@ -133,9 +185,10 @@ enum DayBuilder {
                 guard let rrule = template.rrule, rruleMatches(rrule, on: dayStart, calendar: context.calendar) else {
                     return nil
                 }
-                return makeVirtual(
+                return makeVirtualSeed(
                     template: template,
                     dayStart: dayStart,
+                    exdates: exdates,
                     context: context,
                     origin: .rrule,
                     patternId: nil
@@ -144,14 +197,15 @@ enum DayBuilder {
         }
     }
 
-    private static func makeVirtual(
+    private static func makeVirtualSeed(
         template: TaskTemplate,
         dayStart: Date,
+        exdates: [TemplateExdate],
         context: DayBuilderContext,
         origin: TaskOrigin,
         patternId: UUID?
-    ) -> DayScheduledTask? {
-        let isExcluded = context.exdates.contains { exdate in
+    ) -> VirtualSeed? {
+        let isExcluded = exdates.contains { exdate in
             exdate.templateId == template.id
                 && context.calendar.isDate(exdate.date, inSameDayAs: dayStart)
         }
@@ -159,18 +213,6 @@ enum DayBuilder {
 
         let startAt = dayStart.addingTimeInterval(TimeInterval(template.startMinutesFromMidnight * 60))
         let endAt = startAt.addingTimeInterval(TimeInterval(template.durationMinutes * 60))
-
-        guard let dayEnd = context.calendar.date(byAdding: .day, value: 1, to: dayStart),
-              let (membership, visibleRange) = computeMembership(
-                startAt: startAt,
-                endAt: endAt,
-                dayStart: dayStart,
-                dayEnd: dayEnd,
-                calendar: context.calendar
-              )
-        else {
-            return nil
-        }
 
         let virtualId = UUID.virtual(templateId: template.id, startAt: startAt)
         let virtualTask = ScheduledTask(
@@ -182,12 +224,7 @@ enum DayBuilder {
             templateId: template.id,
             patternId: patternId
         )
-        return DayScheduledTask(
-            task: virtualTask,
-            membership: membership,
-            visibleRange: visibleRange,
-            origin: origin
-        )
+        return VirtualSeed(task: virtualTask, origin: origin)
     }
 
     // MARK: - Entity collection
@@ -224,6 +261,19 @@ enum DayBuilder {
         }
     }
 
+    private static func editedTemplateIds(
+        entities: [DayScheduledTask],
+        targetDayStart: Date,
+        calendar: Calendar
+    ) -> Set<UUID> {
+        Set(entities.compactMap { dayTask -> UUID? in
+            guard let templateId = dayTask.task.templateId else { return nil }
+            let scheduledDay = calendar.startOfDay(for: dayTask.task.startAt)
+            guard scheduledDay == targetDayStart else { return nil }
+            return templateId
+        })
+    }
+
     // MARK: - Membership / visibleRange
 
     private static func computeMembership(
@@ -249,7 +299,7 @@ enum DayBuilder {
         return (.primary, visibleRange)
     }
 
-    // MARK: - rrule (Phase 1 minimal: FREQ=WEEKLY;BYDAY=MO,TU,...)
+    // MARK: - rrule (Phase 1 minimal: FREQ=DAILY, FREQ=WEEKLY;BYDAY=...)
 
     private static func rruleMatches(_ rrule: String, on dayStart: Date, calendar: Calendar) -> Bool {
         let parts = rrule.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }
@@ -269,12 +319,17 @@ enum DayBuilder {
             }
         }
 
-        guard freq == "WEEKLY" else { return false }
-        guard !byday.isEmpty else { return true }
-
-        let weekday = calendar.component(.weekday, from: dayStart)
-        let token = bydayToken(weekday)
-        return byday.contains(token)
+        switch freq {
+        case "DAILY":
+            return true
+        case "WEEKLY":
+            guard !byday.isEmpty else { return true }
+            let weekday = calendar.component(.weekday, from: dayStart)
+            let token = bydayToken(weekday)
+            return byday.contains(token)
+        default:
+            return false
+        }
     }
 
     private static func bydayToken(_ weekday: Int) -> String {
