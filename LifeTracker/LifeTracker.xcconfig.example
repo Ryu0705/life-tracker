@@ -1,0 +1,14 @@
+// LifeTracker.xcconfig - Supabase 接続情報テンプレ
+// 1. このファイルを `LifeTracker.xcconfig` にコピー
+// 2. SUPABASE_URL / SUPABASE_ANON_KEY を Supabase Dashboard の値で埋める
+// 3. Xcode プロジェクトの Configurations (Debug / Release) で
+//    "Based on Configuration File" にこのファイルを設定する
+// 4. LifeTracker.xcconfig は .gitignore 済 (このテンプレ .example のみ git 管理)
+
+// 値に // が含まれると行コメント扱いになるため、URL の // はエスケープ
+SUPABASE_URL = https:/$()/your-project-ref.supabase.co
+SUPABASE_ANON_KEY = your-anon-key-here
+
+// Info.plist 自動生成 (GENERATE_INFOPLIST_FILE = YES) に流し込む
+INFOPLIST_KEY_SUPABASE_URL = $(SUPABASE_URL)
+INFOPLIST_KEY_SUPABASE_ANON_KEY = $(SUPABASE_ANON_KEY)

@@ -8,3 +8,8 @@ build/
 
 # macOS
 .DS_Store
+
+# Secrets (Supabase 認証情報)
+# テンプレは LifeTracker.xcconfig.example として git 管理、実体は除外
+LifeTracker.xcconfig
+

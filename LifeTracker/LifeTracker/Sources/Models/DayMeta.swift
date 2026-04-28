@@ -1,6 +1,6 @@
 import Foundation
 
 struct DayMeta: Codable, Hashable {
-    let date: Date
+    @DateOnly var date: Date
     let appliedPatternId: UUID?
 }
