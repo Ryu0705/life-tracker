@@ -4,6 +4,8 @@ import HolidayJp
 
 @main
 struct LifeTrackerApp: App {
+    @StateObject private var clockTick = ClockTick()
+    @Environment(\.scenePhase) private var scenePhase
     private let initResult: Result<DayDataSource, Error>
 
     init() {
@@ -16,8 +18,19 @@ struct LifeTrackerApp: App {
             case .success(let dataSource):
                 HomeView(dataSource: dataSource)
                     .environment(\.dayDataSource, dataSource)
+                    .environmentObject(clockTick)
             case .failure(let error):
                 ConfigErrorView(error: error)
+            }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            switch newPhase {
+            case .active:
+                clockTick.start()
+            case .inactive, .background:
+                clockTick.stop()
+            @unknown default:
+                break
             }
         }
     }

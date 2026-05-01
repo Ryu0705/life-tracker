@@ -2,8 +2,8 @@ import SwiftUI
 
 struct HomeView: View {
     @Environment(\.dayDataSource) private var dataSource
+    @EnvironmentObject private var clockTick: ClockTick
     @StateObject private var loader: TodayDataLoader
-    @State private var moment: Date = Date()
 
     init(dataSource: DayDataSource? = nil, calendar: Calendar = HomeView.defaultCalendar) {
         let source = dataSource ?? MockDayDataSource(context: .empty)
@@ -39,7 +39,7 @@ struct HomeView: View {
         } else if let day = loader.day {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    CurrentBlockCard(currentBlock: day.currentBlock(at: moment))
+                    CurrentBlockCard(currentBlock: day.currentBlock(at: clockTick.now))
                     ScheduleListView(scheduled: day.scheduled)
                 }
                 .padding()
