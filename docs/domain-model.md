@@ -1,6 +1,8 @@
-# Life Tracker v2 — ドメインモデル v15
+# Life Tracker v2 — ドメインモデル v16
 
 DDL レベル + 設計判断 + DayBuilder + Phase 2 持ち越し論点を集約した SSOT。
+
+**v16 (2026-08-31)**: トレーニング・サブドメインを追加し `gym_actual_input` を撤去。判断根拠は `training-domain-design.md`。
 
 スコープ・コア定義は `spec.md`、構造規約は `structural-conventions.md` を参照。
 決定経緯・代替案・却下理由は memory `project_life_tracker_v2_core.md` 参照。
@@ -140,17 +142,8 @@ CREATE TABLE day_meta (
 
 -- ============================================================
 -- サブ入力 (種別専用テーブル、actual_task と 1:1)
--- Phase 1 で実装: gym + sleep のみ
+-- Phase 1 で実装: sleep のみ (gym は下記トレーニング・サブドメインへ移行)
 -- ============================================================
-
-CREATE TABLE gym_actual_input (
-  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  actual_task_id UUID NOT NULL UNIQUE REFERENCES actual_task (id) ON DELETE CASCADE,
-  exercise       TEXT NOT NULL,             -- 例: "ベンチプレス"
-  weight         REAL,                      -- kg
-  reps           INT,
-  sets           INT
-);
 
 CREATE TABLE sleep_actual_input (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -159,9 +152,108 @@ CREATE TABLE sleep_actual_input (
   -- Phase 2 追加候補: 中途覚醒回数 / 夢の有無 / healthkit_sample_uuid (HealthKit 同期時の external id)
 );
 
+-- v15 の gym_actual_input は v16 で撤去 (migration 0003)。
+--   1 行に (exercise TEXT, weight, reps, sets) を持つ形ではセット毎の差 (60x10 / 65x8 / 65x6) を
+--   表現できず、種目が TEXT 直書きのため PR / 推移の集計も成立しなかった。
+--   → 下記トレーニング・サブドメインへ置換。
 -- Phase 2 以降で追加 (Phase 1 では作らない):
 --   learning_actual_input { material, chapter, note, ... } — PMBOK 計画統合想定
 -- 新サブ入力種別追加時はテーブル追加 + category.sub_input_kind の CHECK 拡張 + コード対応
+
+-- ============================================================
+-- トレーニング・サブドメイン (v16 / migration 0003)
+-- ============================================================
+-- workout_session は独立アグリゲート。actual_task_id は nullable。
+--   actual_task を生成するのはチェックイン機能 (Round 5) であり、1:1 従属させると
+--   トレーニングログがチェックイン実装に依存して実装順序が逆流する。
+--   単独で記録開始でき、後から当日の actual_task にリンクして day-cycle と合流する。
+--   write 系は DayDataSource を拡張せず、別 protocol WorkoutDataSource として切り出す。
+
+CREATE TABLE exercise (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name         TEXT NOT NULL,
+  muscle_group TEXT NOT NULL CHECK (muscle_group IN (
+                 'chest','back','traps','shoulders','biceps','triceps','forearms',
+                 'quads','hamstrings','glutes','calves','core','cardio','full_body'
+               )),
+                                            -- 部位別バランス可視化の粒度。'legs'/'arms' 一括だと
+                                            -- 「ハムだけ抜けている」が検出できない
+  equipment    TEXT CHECK (equipment IN (
+                 'barbell','dumbbell','machine','cable','bodyweight','kettlebell','band','other'
+               )),
+                                            -- スミスマシン→'machine' / EZ バー→'barbell' に寄せる
+  metric_kind  TEXT NOT NULL CHECK (metric_kind IN (
+                 'weight_reps','reps_only','duration','duration_distance'
+               )),
+                                            -- 'duration' はプランク / ウォールシット / デッドハング用。
+                                            -- duration_distance に寄せると距離入力欄が常時出る UI ワートになる
+  note         TEXT,                        -- マシンの使い方 / セッティング (シート高さ等)
+  is_archived  BOOLEAN NOT NULL DEFAULT false,
+  sort_order   INT
+);
+
+CREATE UNIQUE INDEX exercise_name_unique ON exercise (name);
+CREATE INDEX exercise_muscle_group_idx ON exercise (muscle_group) WHERE is_archived = false;
+
+-- ルーティン (プッシュの日 / 脚の日)。
+-- v2 の pattern / task_template とは別系統 — 1 日のパターンとは別の周期概念であり、
+-- 相乗りさせると Round 6a/6b (テンプレ管理 UI) への依存が生まれる。
+CREATE TABLE routine (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL,
+  note        TEXT,
+  is_archived BOOLEAN NOT NULL DEFAULT false,
+  sort_order  INT
+);
+
+CREATE TABLE routine_exercise (
+  routine_id    UUID NOT NULL REFERENCES routine (id) ON DELETE CASCADE,
+  exercise_id   UUID NOT NULL REFERENCES exercise (id) ON DELETE RESTRICT,
+  sort_order    INT  NOT NULL,
+  target_sets   INT  CHECK (target_sets IS NULL OR target_sets > 0),
+  target_reps   INT  CHECK (target_reps IS NULL OR target_reps > 0),
+  target_weight NUMERIC(6,2) CHECK (target_weight IS NULL OR target_weight >= 0),
+  PRIMARY KEY (routine_id, exercise_id)
+);
+
+CREATE INDEX routine_exercise_exercise_idx ON routine_exercise (exercise_id);
+
+CREATE TABLE workout_session (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  actual_task_id UUID UNIQUE REFERENCES actual_task (id) ON DELETE SET NULL,
+                                            -- nullable かつ SET NULL:
+                                            -- actual_task を消してもトレーニング記録は残す
+  routine_id     UUID REFERENCES routine (id) ON DELETE SET NULL,
+  started_at     TIMESTAMPTZ NOT NULL,
+  ended_at       TIMESTAMPTZ CHECK (ended_at IS NULL OR ended_at > started_at),
+                                            -- NULL = 進行中
+  note           TEXT
+);
+
+CREATE INDEX workout_session_started_at_idx ON workout_session (started_at DESC);
+
+-- 進行中セッションは同時 1 件まで (二重開始を構造で防ぐ)
+CREATE UNIQUE INDEX workout_session_single_in_progress
+  ON workout_session ((ended_at IS NULL)) WHERE ended_at IS NULL;
+
+CREATE TABLE workout_set (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id   UUID NOT NULL REFERENCES workout_session (id) ON DELETE CASCADE,
+  exercise_id  UUID NOT NULL REFERENCES exercise (id) ON DELETE RESTRICT,
+  set_index    INT  NOT NULL CHECK (set_index > 0),
+  weight       NUMERIC(6,2) CHECK (weight IS NULL OR weight >= 0),
+                                            -- NULL = 自重。0 は「加重なし」を明示した場合
+  reps         INT CHECK (reps IS NULL OR reps > 0),
+  duration_sec INT CHECK (duration_sec IS NULL OR duration_sec > 0),
+  distance_m   NUMERIC(8,2) CHECK (distance_m IS NULL OR distance_m >= 0),
+  rpe          NUMERIC(3,1) CHECK (rpe IS NULL OR rpe BETWEEN 1 AND 10),
+  is_warmup    BOOLEAN NOT NULL DEFAULT false,   -- PR / ボリューム集計から除外
+  completed_at TIMESTAMPTZ,
+  UNIQUE (session_id, exercise_id, set_index)
+);
+
+CREATE INDEX workout_set_session_idx  ON workout_set (session_id);
+CREATE INDEX workout_set_exercise_idx ON workout_set (exercise_id);
 ```
 
 ---
@@ -184,6 +276,11 @@ CREATE TABLE sleep_actual_input (
 - **サブ入力種別**: `category.sub_input_kind` の CHECK 列で表現 (sub_input_type マスタは不要、二重管理回避)。Phase 2 で `learning` 追加時は ALTER TABLE 1 行で済む
 - **サブ入力データ**: 種別ごとに専用テーブル、actual_task と 1:1 を独立 id PK + UNIQUE 制約で表現
 - **サブ入力対象は actual_task のみ**: template / scheduled_task は category だけ持つ。実績時に詳細記入 (入力負荷削減)
+- **トレーニングは独立アグリゲート**: `workout_session` は `actual_task` に従属させず nullable FK で緩く結ぶ。1日サイクル側 (チェックイン) の完成を待たずに単独で運用でき、後からリンクして結合分析 (睡眠スコア x 挙上重量 等) に載せられる
+- **PR / 推定1RM / ボリューム / ストリーク / 部位別バランスは導出**: 専用テーブルを作らず `workout_set` から集計する (`is_warmup = false` のみ対象)。推定1RM は Epley 式 `weight * (1 + reps / 30)` を既定とし、実装時に確定する
+- **週目標回数は DB に置かない**: ストリーク判定の閾値は履歴不要の設定値のため UserDefaults。「当時の目標」を振り返る要件が出た時点で DB へ昇格
+- **`metric_kind` と充填列の整合はモデル層で担保**: 別テーブル (`exercise`) 参照が必要で CHECK では表現できないため、`feedback_db_constraints_last_defense` の「DB は最後の砦」の適用外
+- **種目 / ルーティンは物理削除しない**: `is_archived` + `ON DELETE RESTRICT` で過去ログの参照先消失を防ぐ
 - **1 日境界**: 0:00-24:00 JST カレンダー日。夜更かし混入は本人合意で許容
 - **並列タスク**: 予実両方で時刻重複許容 (DB 制約に重複禁止を入れない)
 - **B-X 由来識別の不変条件は CHECK 制約**: `scheduled_task_origin_chk` で `pattern_id NOT NULL → template_id NOT NULL` を DB レベルで固定。第 4 状態 (`template_id NULL かつ pattern_id NOT NULL`) を構造的に発生させない

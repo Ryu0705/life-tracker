@@ -31,6 +31,7 @@ v2 ではコアの解像度を上げてから実装に入る。スコープ判�
 - 習慣化 (デフォルトパターンとして内包)
 - 1 日のスケジュール (予実分離)
 - 健康記録 (睡眠 / 食事 / 運動 / 体調)
+  - ※ 本スコープ基準は「何を扱うか」しか判定しない。**どの解像度で扱うか**は別途判断が要る (v16 のトレーニング詳細化はこの穴を通った例)
 - **学習記録** (PMBOK 計画と統合可能)
 
 ### 除外
@@ -95,7 +96,7 @@ v2 ではコアの解像度を上げてから実装に入る。スコープ判�
 
 ### Phase 1 で実装する範囲
 
-- **DB**: `domain-model.md` の v15 DDL (詳細・サブ入力種別の SSOT は `domain-model.md` 側)
+- **DB**: `domain-model.md` の v16 DDL (詳細・サブ入力種別の SSOT は `domain-model.md` 側)
 - **DayBuilder**: pure function、入力は `DayBuilderContext` 構造体に集約 (詳細は `domain-model.md`)
 - **基本 UI** (Phase 1 範囲):
   - 当日表示画面 (Day 単位の scheduled / actual 並置、当日進行中タスクカード相当)
@@ -104,6 +105,8 @@ v2 ではコアの解像度を上げてから実装に入る。スコープ判�
   - tasks の追加 / 編集 / 削除 (F-A 3 択ダイアログ含む)
   - day_meta バッジ (ユーザー操作済み日のマーカー)
   - **テンプレ / パターン / カテゴリ管理 UI** (CRUD、exdate 編集含む。本人運用継続のため Phase 1 内で必要)
+  - **トレーニング記録** (セッション / セット単位。種目マスタ・ルーティン管理を含む) — v16 で追加
+  - **トレーニング進捗の可視化** (PR / 推定1RM / ボリューム推移 / 部位別バランス / 連続週数)
   - 未来日表示は **Phase 1 範囲外** (pattern 編集後の波及確認は当日 + 過去日のみで運用)
 
 ### Phase 2 以降の持ち越し
@@ -119,7 +122,8 @@ v2 ではコアの解像度を上げてから実装に入る。スコープ判�
 
 ## 関連ドキュメント
 
-- `docs/domain-model.md` — v15 DDL、データモデル原則、パターン適用方式、DayBuilder
+- `docs/domain-model.md` — v16 DDL、データモデル原則、パターン適用方式、DayBuilder
+- `docs/training-domain-design.md` — トレーニング・サブドメインの判断根拠 (2026-08-30/31 の再開判断含む)
 - `docs/structural-conventions.md` — SwiftUI View 階層・情報アーキテクチャ規約 (v1 から継承)
 - `docs/agent-delegation-template.md` — Agent 依頼時のプロンプトテンプレ
 - `docs/implementation-roadmap.md` — Phase 5 成果物。Round 構成 / Acceptance / 順序根拠

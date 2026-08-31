@@ -1,6 +1,6 @@
 # Life Tracker v2 実装ロードマップ (Phase 5 成果物)
 
-Phase 1 範囲 (`spec.md`「Phase 1 で実装する範囲」) を **9 Round** (Round 6 は 6a/6b に分割) に分解する。Round 3 完了で minimum viable (個人運用開始可能)。
+Phase 1 範囲 (`spec.md`「Phase 1 で実装する範囲」) を **11 Round** (Round 8 は 8a/8b に分割) に分解する。Round 3 完了で minimum viable (個人運用開始可能)。
 
 各 Round の S 級件数は 3〜5 件 (v1 R10 直列 4 件で機能した規模感)。S 級は **直列**、B/C 級は並列 Wave 可 (`agent-delegation-template.md` 参照)。
 
@@ -18,17 +18,38 @@ Phase 1 範囲 (`spec.md`「Phase 1 で実装する範囲」) を **9 Round** (R
 
 ## Round 一覧
 
+> **2026-08-31 改訂**: Round 3 以降を再編。トレーニング記録を minimum viable に前倒しした。
+> 判断根拠は `training-domain-design.md`。旧 Round 3-8 は 5 以降へ繰り下げ (スコープ自体は不変)。
+
 | Round | スコープ | S 級件数 | 状態 |
 |-------|---------|---------|-----|
-| 1 | DB 基盤 + DayBuilder pure function | 3 | 未着手 |
-| 2 | 当日表示 (read-only、Round 3 用 slot 確保) | 3 | 未着手 |
-| 3 | actual 記録 (チェックイン + サブ入力) | 3 | 未着手 ← **minimum viable** |
-| 4 | pattern 切替 / day_meta | 3 | 未着手 |
-| 5 | 過去日表示 (read-only) | 3 | 未着手 |
-| 6a | テンプレ管理 UI + exdate 編集 | 3 | 未着手 |
-| 6b | パターン・カテゴリ管理 UI | 4 | 未着手 |
-| 7 | 個別実体編集 (E-A / F-A 3 択) | 4 | 未着手 |
-| 8 | 磨き込み + α | S 級 5-7 件上限 / B-C 主体 | 未着手 |
+| 1 | DB 基盤 + DayBuilder pure function | 3 | ✅ 完了 (2026-04-28) |
+| 2 | 当日表示 (read-only、後続 Round 用 slot 確保) | 3 | ✅ 完了 (2026-05-01) |
+| 3 | **トレーニング記録 (セッション + セット単位)** | 3 | 着手可 ← **minimum viable** |
+| 4 | ルーティン管理 + 進捗可視化 + 継続の仕組み | 3 | 未着手 |
+| 5 | actual 記録 (チェックイン) ※ここで day-cycle と合流 | 3 | 未着手 |
+| 6 | pattern 切替 / day_meta | 3 | 未着手 |
+| 7 | 過去日表示 (read-only) | 3 | 未着手 |
+| 8a | テンプレ管理 UI + exdate 編集 | 3 | 未着手 |
+| 8b | パターン・カテゴリ管理 UI | 4 | 未着手 |
+| 9 | 個別実体編集 (E-A / F-A 3 択) | 4 | 未着手 |
+| 10 | 磨き込み + α | S 級 5-7 件上限 / B-C 主体 | 未着手 |
+
+### 新 Round 3: トレーニング記録 (minimum viable)
+
+**S 級内訳**:
+- **S-DB-2**: migration `0003_training_domain.sql` + `0004_exercise_seed.sql` (種目 159 件) 適用
+- **S-Pure-3**: `WorkoutDataSource` protocol + Supabase / Mock 実装 + モデル
+  (Round 1 で保留された「write 系を `DayDataSource` 拡張か別 protocol か」の再決定 = **別 protocol** で確定)
+- **S-View-3**: セッション記録画面 (ルーティン or 種目選択 → セット入力 → 前回セッション参照)
+
+**Acceptance に必ず含める**:
+- [ ] 片手・立位でセット記録を 1 件追加できる (タップ数 / 誤タップしないタップ領域を実機確認)
+- [ ] 前回同種目の重量 x レップが入力画面上で見える (= 「読むために書く」構造の成立確認)
+- [ ] セット毎に異なる重量 (60x10 / 65x8 / 65x6) が記録・再表示できる
+- [ ] 有酸素 (`duration_distance`) と自重 (`reps_only`) で入力欄が切り替わる
+
+休憩タイマー等のセッション中 UX の作り込みは Round 4 以降。
 
 ---
 
