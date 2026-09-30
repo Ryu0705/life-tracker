@@ -34,6 +34,13 @@ protocol WorkoutDataSource {
     /// 期間内 (completed_at の半開区間 [from, to)) の全種目のセット。completed_at IS NULL は含まない。
     /// 1 リクエスト上限 (PostgREST max-rows 1000) を越えないよう実装側でページングする
     func fetchSets(completedFrom from: Date, to: Date) async throws -> [WorkoutSet]
+
+    /// トレーニングした日 (completed_at の JST 暦日) の全期間。連続日数の計算用 (view workout_training_day)
+    func fetchTrainingDays() async throws -> Set<Date>
+    /// 週の目標回数の履歴 (effective_from 順)
+    func fetchWeeklyGoals() async throws -> [WeeklyGoal]
+    /// 同じ週頭の目標があれば上書きする (effective_from の UNIQUE で upsert)
+    func saveWeeklyGoal(_ goal: WeeklyGoal) async throws
 }
 
 /// INSERT 用。id / DB 既定値は DB 側で採番する

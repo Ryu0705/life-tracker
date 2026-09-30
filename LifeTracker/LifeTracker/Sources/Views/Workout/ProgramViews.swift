@@ -119,6 +119,29 @@ struct ProgramLoadSheet: View {
     }
 }
 
+/// 「プログラムから選択」: 一覧から選ぶと確認シート (ProgramLoadSheet) へ進む。作成・編集はここでは行わない
+struct ProgramChooserView: View {
+    let programs: [WorkoutProgram]
+    let exercisesById: [UUID: Exercise]
+
+    var body: some View {
+        List(programs) { program in
+            NavigationLink(value: program) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(program.name)
+                    Text(program.exerciseIds.compactMap { exercisesById[$0]?.name }.joined(separator: "・"))
+                        .font(.caption)
+                        .foregroundStyle(Color.secondary)
+                        .lineLimit(2)
+                }
+                .frame(minHeight: 44, alignment: .leading)
+            }
+        }
+        .navigationTitle("プログラムから選択")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
 /// 開く編集画面の中身。新規・編集・今日の種目での保存 / 上書きで共通
 struct ProgramDraft: Identifiable {
     let id = UUID()
@@ -195,9 +218,9 @@ struct ProgramListView: View {
                 if let message {
                     Text(message).foregroundStyle(.red)
                 } else if programStore.isLoaded && programStore.programs.isEmpty {
-                    Text("プログラムはまだありません。右上の ＋ か、トレーニング画面の「プログラム」メニューの「今日の種目を新しいプログラムに保存」から作れます。")
+                    Text("プログラムはまだありません。右上の ＋ か、トレーニング画面の「プログラム」メニューから作れます。")
                 } else if programStore.isLoaded {
-                    Text("タップで編集、スワイプで削除。読み込みは、トレーニング画面と種目追加のチップから。")
+                    Text("タップで編集、スワイプで削除。読み込みは、トレーニング画面の「プログラムから選択」と種目追加のチップから。")
                 }
             }
         }

@@ -5,5 +5,6 @@ import WidgetKit
 struct RestTimerWidgetBundle: WidgetBundle {
     var body: some Widget {
         RestTimerLiveActivity()
+        StreakWidget()
     }
 }

@@ -8,12 +8,15 @@ struct WorkoutView: View {
     @StateObject private var historyStore: WorkoutHistoryStore
     /// 自分で組んだプログラム。今日の store とは別に持ち、今日の下書きに触れない
     @StateObject private var programStore: ProgramStore
+    /// 継続 (週 N 回基準の連続日数・今週のリング)。ウィジェットへの受け渡しもここから
+    @StateObject private var continuity: ContinuityStore
+    @State private var isEditingGoal = false
     @State private var path = NavigationPath()
     @State private var picker: PickerRequest?
     /// 週帯で選んだ過去日。nil = 今日 (日付をまたいでも今日を指し続ける)
     @State private var selectedDay: Date?
-    /// 空状態のチップから開いたプログラムの確認シート
-    @State private var loadingProgram: WorkoutProgram?
+    /// 今日が空の日の「プログラムから選択」(一覧 → 確認シート)
+    @State private var isChoosingProgram = false
     /// 記録・削除の失敗 (種目 id → 文言)。カードの下に出す
     @State private var messages: [UUID: String] = [:]
     @State private var recordedCount = 0
@@ -60,6 +63,7 @@ struct WorkoutView: View {
         _store = StateObject(wrappedValue: WorkoutSessionStore(dataSource: dataSource, calendar: calendar))
         _historyStore = StateObject(wrappedValue: WorkoutHistoryStore(dataSource: dataSource, calendar: calendar))
         _programStore = StateObject(wrappedValue: ProgramStore(dataSource: dataSource))
+        _continuity = StateObject(wrappedValue: ContinuityStore(dataSource: dataSource, calendar: calendar))
     }
 
     var body: some View {
@@ -81,7 +85,7 @@ struct WorkoutView: View {
                     }
                 }
                 .navigationDestination(for: AnalysisRoute.self) { _ in
-                    WeekAnalysisView(store: store, historyStore: historyStore, calendar: calendar)
+                    WeekAnalysisView(store: store, historyStore: historyStore, continuity: continuity, calendar: calendar)
                 }
                 .navigationDestination(for: ProgramsRoute.self) { _ in
                     ProgramListView(programStore: programStore, exercises: store.exercises)
@@ -89,18 +93,25 @@ struct WorkoutView: View {
                 .sheet(item: $picker) { request in
                     pickerSheet(request)
                 }
-                .sheet(item: $loadingProgram) { program in
+                .sheet(isPresented: $isChoosingProgram) {
                     NavigationStack {
-                        ProgramLoadSheet(program: program, context: programContext) { ids in
-                            loadingProgram = nil
-                            loadPlanned(ids)
-                        }
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("閉じる") { loadingProgram = nil }
+                        ProgramChooserView(programs: programStore.programs, exercisesById: store.exercisesById)
+                            .navigationDestination(for: WorkoutProgram.self) { program in
+                                ProgramLoadSheet(program: program, context: programContext) { ids in
+                                    isChoosingProgram = false
+                                    loadPlanned(ids)
+                                }
                             }
-                        }
+                            .toolbar {
+                                ToolbarItem(placement: .cancellationAction) {
+                                    Button("閉じる") { isChoosingProgram = false }
+                                }
+                            }
                     }
+                }
+                .sheet(isPresented: $isEditingGoal) {
+                    WeeklyGoalSheet(continuity: continuity, today: today)
+                    .presentationDetents([.medium])
                 }
                 .sheet(item: $programDraft) { draft in
                     ProgramEditView(programStore: programStore, exercises: store.exercises, draft: draft)
@@ -120,17 +131,27 @@ struct WorkoutView: View {
         .task {
             async let staleActivities: Void = RestAlerts.endActivities()
             async let programs: Void = programStore.load()
+            async let continuityLoad: Void = continuity.load()
             await store.load()
             await loadHistory()
             await programs
+            await continuityLoad
+            continuity.share(today: today, recordedToday: !store.sets.isEmpty)
             await staleActivities
         }
         .task(id: displayedWeekStart) { await historyStore.ensureLoaded(weekStarts: [displayedWeekStart]) }
         .onChange(of: store.session?.id) {
             // 日跨ぎ (23:50 → 0:10) で昨日の分をキャッシュから取りこぼさないよう取り直す
             historyStore.invalidate()
-            Task { await loadHistory() }
+            Task {
+                await loadHistory()
+                await continuity.load()
+                continuity.share(today: today, recordedToday: !store.sets.isEmpty)
+            }
         }
+        // 今日の最初の記録・最後の削除と目標の変更で、ウィジェットの連続日数を更新する
+        .onChange(of: store.sets.isEmpty) { continuity.share(today: today, recordedToday: !store.sets.isEmpty) }
+        .onChange(of: continuity.goals) { continuity.share(today: today, recordedToday: !store.sets.isEmpty) }
         .task(id: toast) {
             guard toast != nil else { return }
             try? await Task.sleep(for: .seconds(3))
@@ -188,6 +209,11 @@ struct WorkoutView: View {
         .animation(.default, value: toast)
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 0) {
+                if continuity.isLoaded {
+                    ContinuityRow(status: continuity.status(today: today, recordedToday: !store.sets.isEmpty)) {
+                        isEditingGoal = true
+                    }
+                }
                 WeekStripView(selectedDay: displayedDay, today: today, recordedDays: recordedDays, calendar: calendar,
                               onSelect: select, onShiftWeek: { select(WorkoutSummary.shiftWeek(selected: displayedDay, by: $0, today: today, calendar: calendar)) })
                 DaySummaryBar(day: displayedDay, isToday: selectedDay == nil, totals: WorkoutSummary.dayTotals(displayedSets),
@@ -211,14 +237,22 @@ struct WorkoutView: View {
                 }
             }
 
-            // 今日が空の日だけ、空状態そのものとして出す (種目が入ったら種目追加シートの中だけに残る)
+            // 今日が空の日だけ出す (種目が入ったら種目追加シートのチップから読み込む)。作成・編集は左上の「プログラム」から。
+            // 0 件でも押せないボタンとして出し、作り方を footer で示す
             if store.todayExerciseIds.isEmpty && programStore.isLoaded {
-                Section("プログラム") {
+                Section {
+                    Button {
+                        isChoosingProgram = true
+                    } label: {
+                        // List 内の disabled は文字が黒くなるだけでアイコンは青のまま残るため、押せないときは全体を灰色にする
+                        Label("プログラムから選択", systemImage: "list.bullet.rectangle")
+                            .foregroundStyle(programStore.programs.isEmpty ? Color.secondary : Color.accentColor)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .disabled(programStore.programs.isEmpty)
+                } footer: {
                     if programStore.programs.isEmpty {
-                        Button("プログラムを作る") { path.append(ProgramsRoute()) }
-                    } else {
-                        ProgramChips(programs: programStore.programs) { loadingProgram = $0 }
-                            .listRowInsets(EdgeInsets())
+                        Text("プログラムは左上の「プログラム」から作れます。")
                     }
                 }
             }
@@ -365,12 +399,13 @@ struct WorkoutView: View {
         }
     }
 
-    /// 左上「プログラム」: 一覧 (管理) と、今日の種目の保存・上書き。
+    /// 左上「プログラム」: 作成・一覧 (管理) と、今日の種目の保存・上書き。
     /// 同じ並びのプログラムがあれば保存は押せず、上書き先も同じ並びのものは押せない。今日が空なら両方押せない (D-1)
     private var programMenu: some View {
         let todayIds = store.todayExerciseIds
         let same = programStore.program(withSameOrderAs: todayIds)
         return Menu {
+            Button("新しいプログラムを作成", systemImage: "plus") { programDraft = .new() }
             Button("プログラム一覧", systemImage: "list.bullet") { path.append(ProgramsRoute()) }
             Section("今日の種目（\(todayIds.count)種目）") {
                 Button {

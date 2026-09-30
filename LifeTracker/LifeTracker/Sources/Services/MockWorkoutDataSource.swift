@@ -16,6 +16,7 @@ final class MockWorkoutDataSource: WorkoutDataSource {
     private(set) var routineExercises: [RoutineExercise]
     private(set) var sessions: [WorkoutSession]
     private(set) var sets: [WorkoutSet]
+    private(set) var weeklyGoals: [WeeklyGoal] = []
 
     /// テスト用の失敗注入: addSet の応答を遅らせる (二度押しの再現)
     var addSetDelayNanoseconds: UInt64 = 0
@@ -158,5 +159,19 @@ final class MockWorkoutDataSource: WorkoutDataSource {
         return sets
             .filter { $0.completedAt.map { from <= $0 && $0 < to } ?? false }
             .sorted { ($0.completedAt!, $0.setIndex) < ($1.completedAt!, $1.setIndex) }
+    }
+
+    func fetchTrainingDays() async throws -> Set<Date> {
+        let calendar = Calendar.current
+        return Set(sets.compactMap(\.completedAt).map { calendar.startOfDay(for: $0) })
+    }
+
+    func fetchWeeklyGoals() async throws -> [WeeklyGoal] {
+        weeklyGoals.sorted { $0.effectiveFrom < $1.effectiveFrom }
+    }
+
+    func saveWeeklyGoal(_ goal: WeeklyGoal) async throws {
+        weeklyGoals.removeAll { $0.effectiveFrom == goal.effectiveFrom }
+        weeklyGoals.append(goal)
     }
 }

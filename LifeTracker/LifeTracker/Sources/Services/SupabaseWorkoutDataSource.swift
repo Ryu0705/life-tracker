@@ -181,6 +181,30 @@ final class SupabaseWorkoutDataSource: WorkoutDataSource {
         }
     }
 
+    func fetchTrainingDays() async throws -> Set<Date> {
+        let rows: [TrainingDayRow] = try await fetchAllPages {
+            client.from("workout_training_day")
+                .select()
+                .order("day")
+        }
+        return Set(rows.map(\.day))
+    }
+
+    func fetchWeeklyGoals() async throws -> [WeeklyGoal] {
+        let rows: [WeeklyGoalRow] = try await client.from("training_goal")
+            .select("weekly_target, effective_from")
+            .order("effective_from")
+            .execute()
+            .value
+        return rows.map { WeeklyGoal(weeklyTarget: $0.weeklyTarget, effectiveFrom: $0.effectiveFrom) }
+    }
+
+    func saveWeeklyGoal(_ goal: WeeklyGoal) async throws {
+        try await client.from("training_goal")
+            .upsert(WeeklyGoalRow(weeklyTarget: goal.weeklyTarget, effectiveFrom: goal.effectiveFrom), onConflict: "effective_from")
+            .execute()
+    }
+
     /// PostgREST の max-rows (1000) を越えた分はエラーにならず黙って切られるため、件数が pageSize 未満になるまで
     /// .range で取り直す。ページ間で行がずれないよう、query は一意なキー (id) まで order を付けること。
     /// builder は range で自身を書き換えるので、ページごとに query を作り直す
@@ -200,6 +224,15 @@ final class SupabaseWorkoutDataSource: WorkoutDataSource {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.string(from: date)
     }
+}
+
+private struct TrainingDayRow: Decodable {
+    @DateOnly var day: Date
+}
+
+private struct WeeklyGoalRow: Codable {
+    let weeklyTarget: Int
+    @DateOnly var effectiveFrom: Date
 }
 
 private struct ExerciseIdRow: Decodable {

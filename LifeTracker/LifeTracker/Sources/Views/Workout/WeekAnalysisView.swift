@@ -3,10 +3,11 @@ import Charts
 
 /// トレーニングタブの右上 [📊] から push する分析 (3 つ目のタブにはしない)。
 /// 週の総ボリューム・前週比・曜日×部位の棒グラフ・部位別の本番セット数と、種目ごとの推移一覧。
-/// 「今週 N 日」「連続 N 週」「目標達成」は出さない (INV-6)
+/// 上端に継続 (連続日数・今週の回数・直近半年のヒートマップ。docs/continuity-design.md)
 struct WeekAnalysisView: View {
     @ObservedObject var store: WorkoutSessionStore
     @ObservedObject var historyStore: WorkoutHistoryStore
+    @ObservedObject var continuity: ContinuityStore
     let calendar: Calendar
 
     /// 表示中の週頭。nil = 今週 (日付をまたいでも今週を指し続ける)
@@ -24,6 +25,7 @@ struct WeekAnalysisView: View {
         let previousThrough = isCurrentWeek ? calendar.date(byAdding: .day, value: -7, to: today) : nil
         let previous = historyStore.isLoaded(weekStart: previousWeek) ? totals(previousWeek, through: previousThrough) : nil
         List {
+            Section("継続（直近半年）") { continuitySection }
             Section { weekNavigation }
             Section("総ボリューム") {
                 volumeHeader(current: current, previous: previous, isPartial: previousThrough != nil)
@@ -59,6 +61,10 @@ struct WeekAnalysisView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: shownWeek) { await historyStore.ensureLoaded(weekStarts: [shownWeek, previousWeek]) }
         .task { await historyStore.loadRecordedExerciseIds() }
+        .task {
+            let start = Continuity.weekStart(containing: today, calendar: calendar)
+            await historyStore.ensureLoaded(weekStarts: (0..<TrainingHeatmap.weekCount).map { calendar.date(byAdding: .day, value: -7 * $0, to: start)! })
+        }
     }
 
     private var weekNavigation: some View {
@@ -78,6 +84,28 @@ struct WeekAnalysisView: View {
                 .accessibilityLabel("次の週")
         }
         .buttonStyle(.borderless)
+    }
+
+    @ViewBuilder
+    private var continuitySection: some View {
+        if let status = continuity.status(today: today, recordedToday: !store.sets.isEmpty) {
+            HStack(spacing: 10) {
+                StreakLabel(days: status.streakDays)
+                WeekRing(status: status, lineWidth: 3)
+                    .frame(width: 18, height: 18)
+                Text(ContinuityRow.weekText(status))
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        TrainingHeatmap(volumes: heatmapVolumes, today: today, calendar: calendar)
+    }
+
+    /// 日 → ボリューム。kg の出ない種目だけの日も「やった日」として最も薄い色で出す
+    private var heatmapVolumes: [Date: Double] {
+        let sets = WorkoutSummary.mergeToday(historySets: historyStore.loadedSets, todaySets: store.sets, today: today, calendar: calendar)
+        return Dictionary(grouping: sets.filter { $0.completedAt != nil }) { WorkoutSummary.dayKey($0.completedAt!, calendar: calendar) }
+            .mapValues { max(WorkoutProgress.value(of: .volume, in: $0) ?? 0, .leastNonzeroMagnitude) }
     }
 
     private static func chevron(_ name: String) -> some View {
