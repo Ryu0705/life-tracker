@@ -7,11 +7,20 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		203A51633FA334C64EA1610A /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FA8E5A922E7CEAE2E67E0FB9 /* Foundation.framework */; };
+		8F9D7561D13ABE73ADC84AF2 /* RestTimerWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3F869E7AED09FC565C74F2E1 /* RestTimerWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		D86D16D82F9E41AF0047F0EF /* HolidayJp in Frameworks */ = {isa = PBXBuildFile; productRef = D86D16D72F9E41AF0047F0EF /* HolidayJp */; };
 		D86D16DB2F9E42F20047F0EF /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = D86D16DA2F9E42F20047F0EF /* Supabase */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		0073C91AA92BB8213B0FAF21 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D86D169F2F9E3F2F0047F0EF /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FD52F0AC57633BDB5C7618E7;
+			remoteInfo = RestTimerWidget;
+		};
 		D86D16B52F9E3F300047F0EF /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = D86D169F2F9E3F2F0047F0EF /* Project object */;
@@ -28,32 +37,76 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		995E14FE0C7E492584F98336 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				8F9D7561D13ABE73ADC84AF2 /* RestTimerWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		3F869E7AED09FC565C74F2E1 /* RestTimerWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = RestTimerWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		D86D16A72F9E3F2F0047F0EF /* LifeTracker.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LifeTracker.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D86D16B42F9E3F300047F0EF /* LifeTrackerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LifeTrackerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D86D16BE2F9E3F300047F0EF /* LifeTrackerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LifeTrackerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D86D17022FA031FD0047F0EF /* LifeTracker.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = LifeTracker.xcconfig; sourceTree = "<group>"; };
+		FA8E5A922E7CEAE2E67E0FB9 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		42881E2DDBD85A88A4694C52 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		BABB0A5138C17A8D0A98C24B /* RestTimerWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
+			path = RestTimerWidget;
+			sourceTree = "<group>";
+		};
 		D86D16A92F9E3F2F0047F0EF /* LifeTracker */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = LifeTracker;
 			sourceTree = "<group>";
 		};
 		D86D16B72F9E3F300047F0EF /* LifeTrackerTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = LifeTrackerTests;
 			sourceTree = "<group>";
 		};
 		D86D16C12F9E3F300047F0EF /* LifeTrackerUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = LifeTrackerUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		AC64B69EFA97AC0D82958CE1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				203A51633FA334C64EA1610A /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D86D16A42F9E3F2F0047F0EF /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -80,6 +133,22 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		0855A8AFA65E503BD6482A98 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				FA8E5A922E7CEAE2E67E0FB9 /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		A77A912955F035CBC5A2A804 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				0855A8AFA65E503BD6482A98 /* iOS */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		D86D169E2F9E3F2F0047F0EF = {
 			isa = PBXGroup;
 			children = (
@@ -88,6 +157,9 @@
 				D86D16C12F9E3F300047F0EF /* LifeTrackerUITests */,
 				D86D16A82F9E3F2F0047F0EF /* Products */,
 				D86D17022FA031FD0047F0EF /* LifeTracker.xcconfig */,
+				A77A912955F035CBC5A2A804 /* Frameworks */,
+				BABB0A5138C17A8D0A98C24B /* RestTimerWidget */,
+				42881E2DDBD85A88A4694C52 /* Shared */,
 			);
 			sourceTree = "<group>";
 		};
@@ -97,6 +169,7 @@
 				D86D16A72F9E3F2F0047F0EF /* LifeTracker.app */,
 				D86D16B42F9E3F300047F0EF /* LifeTrackerTests.xctest */,
 				D86D16BE2F9E3F300047F0EF /* LifeTrackerUITests.xctest */,
+				3F869E7AED09FC565C74F2E1 /* RestTimerWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -111,13 +184,16 @@
 				D86D16A32F9E3F2F0047F0EF /* Sources */,
 				D86D16A42F9E3F2F0047F0EF /* Frameworks */,
 				D86D16A52F9E3F2F0047F0EF /* Resources */,
+				995E14FE0C7E492584F98336 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A4FB2B03D569A23FA628BC6C /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				D86D16A92F9E3F2F0047F0EF /* LifeTracker */,
+				42881E2DDBD85A88A4694C52 /* Shared */,
 			);
 			name = LifeTracker;
 			packageProductDependencies = (
@@ -145,8 +221,6 @@
 				D86D16B72F9E3F300047F0EF /* LifeTrackerTests */,
 			);
 			name = LifeTrackerTests;
-			packageProductDependencies = (
-			);
 			productName = LifeTrackerTests;
 			productReference = D86D16B42F9E3F300047F0EF /* LifeTrackerTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -168,11 +242,30 @@
 				D86D16C12F9E3F300047F0EF /* LifeTrackerUITests */,
 			);
 			name = LifeTrackerUITests;
-			packageProductDependencies = (
-			);
 			productName = LifeTrackerUITests;
 			productReference = D86D16BE2F9E3F300047F0EF /* LifeTrackerUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		FD52F0AC57633BDB5C7618E7 /* RestTimerWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AD11B7A83659B35967458F57 /* Build configuration list for PBXNativeTarget "RestTimerWidget" */;
+			buildPhases = (
+				76FC44A1FD85BE4491F28835 /* Sources */,
+				AC64B69EFA97AC0D82958CE1 /* Frameworks */,
+				D203E72BA80B7E236A07047B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				BABB0A5138C17A8D0A98C24B /* RestTimerWidget */,
+				42881E2DDBD85A88A4694C52 /* Shared */,
+			);
+			name = RestTimerWidget;
+			productName = RestTimerWidget;
+			productReference = 3F869E7AED09FC565C74F2E1 /* RestTimerWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -198,10 +291,11 @@
 				};
 			};
 			buildConfigurationList = D86D16A22F9E3F2F0047F0EF /* Build configuration list for PBXProject "LifeTracker" */;
-			developmentRegion = en;
+			developmentRegion = ja;
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
+				ja,
 				Base,
 			);
 			mainGroup = D86D169E2F9E3F2F0047F0EF;
@@ -218,11 +312,19 @@
 				D86D16A62F9E3F2F0047F0EF /* LifeTracker */,
 				D86D16B32F9E3F300047F0EF /* LifeTrackerTests */,
 				D86D16BD2F9E3F300047F0EF /* LifeTrackerUITests */,
+				FD52F0AC57633BDB5C7618E7 /* RestTimerWidget */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		D203E72BA80B7E236A07047B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D86D16A52F9E3F2F0047F0EF /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -247,6 +349,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		76FC44A1FD85BE4491F28835 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D86D16A32F9E3F2F0047F0EF /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -271,6 +380,12 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		A4FB2B03D569A23FA628BC6C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = RestTimerWidget;
+			target = FD52F0AC57633BDB5C7618E7 /* RestTimerWidget */;
+			targetProxy = 0073C91AA92BB8213B0FAF21 /* PBXContainerItemProxy */;
+		};
 		D86D16B62F9E3F300047F0EF /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = D86D16A62F9E3F2F0047F0EF /* LifeTracker */;
@@ -284,6 +399,61 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		406250F5467868CB64500239 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MJJ4SS968R;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "RestTimerWidget-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryunosuke.LifeTracker.RestTimerWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		5446535841A37CE152ED27FD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MJJ4SS968R;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "RestTimerWidget-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryunosuke.LifeTracker.RestTimerWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		D86D16C62F9E3F300047F0EF /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = D86D17022FA031FD0047F0EF /* LifeTracker.xcconfig */;
@@ -550,6 +720,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		AD11B7A83659B35967458F57 /* Build configuration list for PBXNativeTarget "RestTimerWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				406250F5467868CB64500239 /* Release */,
+				5446535841A37CE152ED27FD /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		D86D16A22F9E3F2F0047F0EF /* Build configuration list for PBXProject "LifeTracker" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

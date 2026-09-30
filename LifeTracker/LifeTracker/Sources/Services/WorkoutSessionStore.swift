@@ -1,0 +1,312 @@
+import Foundation
+import Combine
+
+/// トレーニング画面の状態。書き込みは WorkoutDataSource 経由のみ、導出は WorkoutLogic / WorkoutProgress に委ねる。
+///
+/// 開始・終了の操作は持たない (2026-09-30 本人フィードバック「単純に何をしたのかを記録したい」)。
+/// その日最初のセット記録で当日の workout_session を作り、前日以前の進行中セッションは次のロード時に閉じる
+@MainActor
+final class WorkoutSessionStore: ObservableObject {
+    @Published private(set) var exercises: [Exercise] = []
+    /// 当日のセッション (まだ 1 セットも記録していなければ nil)
+    @Published private(set) var session: WorkoutSession?
+    /// 当日のセット
+    @Published private(set) var sets: [WorkoutSet] = []
+    /// 今日の画面に並べる種目の順番。記録しても並び替えない (記録のたびにカードが動くと押し間違えるため)
+    @Published private(set) var plannedExerciseIds: [UUID] = []
+    /// 未保存の行 (種目 id → 行)。アプリ内メモリのみで、✓ を押した行だけ DB に入る
+    @Published private(set) var drafts: [UUID: [DraftSet]] = [:]
+    /// 種目ごとの全セット (前回・推移・履歴の元データ)
+    @Published private(set) var history: [UUID: [WorkoutSet]] = [:]
+    @Published private(set) var isLoading = false
+    /// 書き込み中。二度押しで同じ set_index / 当日セッションを重複 INSERT しないためのガード
+    @Published private(set) var isWriting = false
+    @Published var error: Error?
+
+    private let dataSource: WorkoutDataSource
+    private let calendar: Calendar
+    private let now: () -> Date
+
+    init(dataSource: WorkoutDataSource, calendar: Calendar, now: @escaping () -> Date = { Date() }) {
+        self.dataSource = dataSource
+        self.calendar = calendar
+        self.now = now
+    }
+
+    var exercisesById: [UUID: Exercise] {
+        Dictionary(uniqueKeysWithValues: exercises.map { ($0.id, $0) })
+    }
+
+    /// 今日の種目: 追加した順 (記録済みで並びに無いものは末尾)
+    var todayExerciseIds: [UUID] {
+        let recorded = WorkoutLogic.groupByExercise(sets).map(\.exerciseId)
+        return plannedExerciseIds + recorded.filter { !plannedExerciseIds.contains($0) }
+    }
+
+    func sets(for exerciseId: UUID) -> [WorkoutSet] {
+        sets.filter { $0.exerciseId == exerciseId }.sorted { $0.setIndex < $1.setIndex }
+    }
+
+    func previousDay(for exerciseId: UUID) -> DailySets? {
+        history[exerciseId].flatMap { WorkoutProgress.previousDay($0, today: now(), calendar: calendar) }
+    }
+
+    func daily(for exerciseId: UUID) -> [DailySets] {
+        WorkoutProgress.daily(history[exerciseId] ?? [], calendar: calendar)
+    }
+
+    /// 今日より前の日 (履歴表示用)。新しい日が先頭
+    func pastDays(for exerciseId: UUID) -> [DailySets] {
+        let todayStart = calendar.startOfDay(for: now())
+        return daily(for: exerciseId).filter { $0.day < todayStart }
+    }
+
+    /// 全件取得してから一括で反映する (途中で失敗したときに半端な状態を作らない)
+    func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            async let exercisesResp = dataSource.fetchExercises()
+            async let sessionResp = dataSource.fetchInProgressSession()
+            let (exercises, inProgress) = try await (exercisesResp, sessionResp)
+
+            var todaySession: WorkoutSession?
+            var todaySets: [WorkoutSet] = []
+            if let inProgress {
+                if calendar.isDate(inProgress.startedAt, inSameDayAs: now()) {
+                    todaySession = inProgress
+                    todaySets = try await dataSource.fetchSets(sessionId: inProgress.id)
+                } else {
+                    try await close(staleSession: inProgress)
+                }
+            }
+
+            if todaySession?.id != session?.id {
+                plannedExerciseIds = []
+                drafts = [:]
+            }
+            let recordedOrder = WorkoutLogic.groupByExercise(todaySets).map(\.exerciseId)
+            self.exercises = exercises
+            self.session = todaySession
+            self.sets = todaySets
+            self.plannedExerciseIds = plannedExerciseIds + recordedOrder.filter { !plannedExerciseIds.contains($0) }
+            self.history = [:] // 日付が変わった後の再表示でも前回・推移を取り直す
+        } catch {
+            report(error)
+            return
+        }
+        for exerciseId in todayExerciseIds {
+            await loadHistory(exerciseId: exerciseId)
+            prepareDrafts(exerciseId: exerciseId)
+        }
+    }
+
+    /// 種目を今日の画面に足し、前回の値で埋めた行を用意する
+    func addPlannedExercise(_ exerciseId: UUID) async {
+        guard !todayExerciseIds.contains(exerciseId) else { return }
+        plannedExerciseIds.append(exerciseId)
+        await loadHistory(exerciseId: exerciseId)
+        prepareDrafts(exerciseId: exerciseId)
+    }
+
+    /// 並びから外す (記録済みのセットは消さない。記録済みの種目は外せない)
+    func removePlannedExercise(_ exerciseId: UUID) {
+        guard sets(for: exerciseId).isEmpty else { return }
+        plannedExerciseIds.removeAll { $0 == exerciseId }
+        drafts[exerciseId] = nil
+    }
+
+    /// 未記録のカードの種目を差し替える (Gymwork の ⇄)。位置は保ち、行は差し替え先の前回値で作り直す。
+    /// 記録済みのカード・すでに今日にある種目への差し替えは何もしない
+    func replacePlannedExercise(_ oldId: UUID, with newId: UUID) async {
+        guard sets(for: oldId).isEmpty, !todayExerciseIds.contains(newId),
+              let index = plannedExerciseIds.firstIndex(of: oldId) else { return }
+        plannedExerciseIds[index] = newId
+        drafts[oldId] = nil
+        await loadHistory(exerciseId: newId)
+        prepareDrafts(exerciseId: newId)
+    }
+
+    /// 前回の日の同じ位置のセット (行の「前回」列)
+    func previousSet(for exerciseId: UUID, position: Int) -> WorkoutSet? {
+        guard let previous = previousDay(for: exerciseId)?.sets, previous.indices.contains(position) else { return nil }
+        return previous[position]
+    }
+
+    func updateDraft(exerciseId: UUID, draftId: UUID, input: WorkoutSetInput) {
+        guard let index = drafts[exerciseId]?.firstIndex(where: { $0.id == draftId }) else { return }
+        drafts[exerciseId]?[index].input = input
+    }
+
+    func addDraft(exerciseId: UUID) {
+        let rows = drafts[exerciseId] ?? []
+        let lastRow = rows.last?.input ?? sets(for: exerciseId).last.map { WorkoutLogic.input(from: $0, keepWarmup: false) }
+        let position = sets(for: exerciseId).count + rows.count
+        let input = WorkoutLogic.nextDraft(lastRow: lastRow, previousAtPosition: previousSet(for: exerciseId, position: position))
+        drafts[exerciseId, default: []].append(DraftSet(input: input))
+    }
+
+    /// 「残りのセットに適用」: この行より下の未保存の行を同じ値にする (ウォームアップ区分は各行のまま)
+    func applyToRemaining(exerciseId: UUID, from draftId: UUID) {
+        guard let rows = drafts[exerciseId], let index = rows.firstIndex(where: { $0.id == draftId }) else { return }
+        let source = rows[index].input
+        for i in rows.indices where i > index {
+            var input = source
+            input.isWarmup = rows[i].input.isWarmup
+            drafts[exerciseId]?[i].input = input
+        }
+    }
+
+    /// 今日より前の推定1RMのベスト (自己ベスト更新の判定用)
+    func bestOneRMBeforeToday(exerciseId: UUID) -> Double? {
+        WorkoutProgress.bestOneRM(pastDays(for: exerciseId).flatMap(\.sets))
+    }
+
+    func removeDraft(exerciseId: UUID, draftId: UUID) {
+        drafts[exerciseId]?.removeAll { $0.id == draftId }
+    }
+
+    /// ✓: 行を DB に保存し、成功したら未保存の行から外す
+    @discardableResult
+    func completeDraft(exercise: Exercise, draftId: UUID) async -> Result<WorkoutSet, Error> {
+        guard let draft = drafts[exercise.id]?.first(where: { $0.id == draftId }) else {
+            return .failure(StoreError.busy)
+        }
+        let result = await addSet(exercise: exercise, input: draft.input)
+        if case .success = result { removeDraft(exerciseId: exercise.id, draftId: draftId) }
+        return result
+    }
+
+    private func prepareDrafts(exerciseId: UUID) {
+        guard drafts[exerciseId] == nil else { return }
+        drafts[exerciseId] = WorkoutLogic.initialDrafts(
+            currentSets: sets(for: exerciseId),
+            previousSets: previousDay(for: exerciseId)?.sets ?? []
+        ).map { DraftSet(input: $0) }
+    }
+
+    func loadHistory(exerciseId: UUID) async {
+        guard history[exerciseId] == nil else { return }
+        do {
+            history[exerciseId] = try await dataSource.fetchExerciseSets(exerciseId: exerciseId)
+        } catch {
+            report(error)
+        }
+    }
+
+    /// 失敗は戻り値で返す (呼び出し側の画面で表示する。push 先から root の alert は出ないことがあるため)
+    @discardableResult
+    func addSet(exercise: Exercise, input: WorkoutSetInput) async -> Result<WorkoutSet, Error> {
+        guard !isWriting else { return .failure(StoreError.busy) }
+        let validated: WorkoutSetInput.Validated
+        switch input.validate(for: exercise.metricKind) {
+        case .failure(let validationError): return .failure(validationError)
+        case .success(let v): validated = v
+        }
+
+        isWriting = true
+        defer { isWriting = false }
+        let session: WorkoutSession
+        do {
+            session = try await todaySessionCreatingIfNeeded()
+        } catch {
+            return .failure(error)
+        }
+
+        do {
+            let created = try await dataSource.addSet(NewWorkoutSet(
+                sessionId: session.id,
+                exerciseId: exercise.id,
+                setIndex: WorkoutLogic.nextSetIndex(for: exercise.id, in: sets),
+                weight: validated.weight, reps: validated.reps,
+                durationSec: validated.durationSec, distanceM: validated.distanceM,
+                isWarmup: validated.isWarmup,
+                completedAt: now()
+            ))
+            sets.append(created)
+            if !plannedExerciseIds.contains(exercise.id) { plannedExerciseIds.append(exercise.id) }
+            // 未ロードの履歴に 1 件だけ入れると loadHistory が「ロード済み」と誤認して前回が出なくなる
+            history[exercise.id]?.append(created)
+            return .success(created)
+        } catch {
+            // INSERT が通ってレスポンスだけ失われた可能性があるため、サーバーの状態に合わせ直す
+            if let refreshed = try? await dataSource.fetchSets(sessionId: session.id) {
+                sets = refreshed
+            }
+            if let refreshedHistory = try? await dataSource.fetchExerciseSets(exerciseId: exercise.id) {
+                history[exercise.id] = refreshedHistory
+            }
+            return .failure(error)
+        }
+    }
+
+    @discardableResult
+    func deleteSet(_ set: WorkoutSet) async -> Error? {
+        do {
+            try await dataSource.deleteSet(id: set.id)
+            sets.removeAll { $0.id == set.id }
+            history[set.exerciseId]?.removeAll { $0.id == set.id }
+            return nil
+        } catch {
+            return Self.isCancellation(error) ? nil : error
+        }
+    }
+
+    private func todaySessionCreatingIfNeeded() async throws -> WorkoutSession {
+        if let session, calendar.isDate(session.startedAt, inSameDayAs: now()) { return session }
+        // 日付をまたいで開いたままの画面から記録した場合: 前日分を閉じてから今日の分を作る
+        if let stale = try await dataSource.fetchInProgressSession() {
+            if calendar.isDate(stale.startedAt, inSameDayAs: now()) {
+                session = stale
+                return stale
+            }
+            try await close(staleSession: stale)
+        }
+        let created = try await dataSource.startSession(routineId: nil, startedAt: now())
+        session = created
+        sets = []
+        return created
+    }
+
+    /// 前日以前の進行中セッションを閉じる。破棄の判定はサーバーのセットで行う
+    /// (応答だけ失われたセットを CASCADE で消さないため)。終了時刻は最後のセットの時刻
+    private func close(staleSession: WorkoutSession) async throws {
+        let serverSets = try await dataSource.fetchSets(sessionId: staleSession.id)
+        if serverSets.isEmpty {
+            try await dataSource.deleteSession(id: staleSession.id)
+        } else {
+            let lastSetAt = serverSets.compactMap(\.completedAt).max() ?? staleSession.startedAt
+            try await dataSource.endSession(
+                id: staleSession.id,
+                endedAt: WorkoutLogic.endDate(startedAt: staleSession.startedAt, now: lastSetAt)
+            )
+        }
+    }
+
+    /// 画面離脱で .task がキャンセルされた場合はエラー表示しない
+    private func report(_ error: Error) {
+        guard !Self.isCancellation(error) else { return }
+        self.error = error
+    }
+
+    static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        return false
+    }
+
+    struct DraftSet: Identifiable, Hashable {
+        let id = UUID()
+        var input: WorkoutSetInput
+    }
+
+    enum StoreError: Error, LocalizedError {
+        case busy
+
+        var errorDescription: String? {
+            switch self {
+            case .busy: return "記録中です"
+            }
+        }
+    }
+}
