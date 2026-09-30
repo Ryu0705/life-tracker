@@ -15,12 +15,16 @@ enum DayBuilder {
         let todaySeeds = composeVirtualSeeds(
             mode: todayMode,
             dayStart: dayStart,
+            templates: context.templates,
+            memberships: context.memberships,
             exdates: context.exdates,
             context: context
         )
         let previousSeeds = composeVirtualSeeds(
             mode: previousMode,
             dayStart: previousDayStart,
+            templates: context.previousTemplates,
+            memberships: context.previousMemberships,
             exdates: context.previousExdates,
             context: context
         )
@@ -39,7 +43,8 @@ enum DayBuilder {
                 task: seed.task,
                 membership: membership,
                 visibleRange: visibleRange,
-                origin: seed.origin
+                origin: seed.origin,
+                isVirtual: true
             )
         }
 
@@ -49,13 +54,15 @@ enum DayBuilder {
             context: context
         )
 
+        // 仮想の抑制は clip 前の実体から作る。前日の「その日だけ変えた回」が当日に重ならない形
+        // (例: 前日 21:00–23:00) でも、前日の仮想の流入を消すため (レビュー DB §3-1 の既存バグ)
         let editedOnDate = editedTemplateIds(
-            entities: scheduledFromEntities,
+            tasks: context.scheduledTasks,
             targetDayStart: dayStart,
             calendar: context.calendar
         )
         let editedOnPreviousDay = editedTemplateIds(
-            entities: scheduledFromEntities,
+            tasks: context.scheduledTasks,
             targetDayStart: previousDayStart,
             calendar: context.calendar
         )
@@ -157,6 +164,8 @@ enum DayBuilder {
     private static func composeVirtualSeeds(
         mode: Mode,
         dayStart: Date,
+        templates: [TaskTemplate],
+        memberships: [PatternTemplateMembership],
         exdates: [TemplateExdate],
         context: DayBuilderContext
     ) -> [VirtualSeed] {
@@ -165,11 +174,10 @@ enum DayBuilder {
             return []
 
         case .pattern(let patternId):
-            let templateIds = context.memberships
+            let templateIds = memberships
                 .filter { $0.patternId == patternId }
                 .map { $0.templateId }
-            let templates = context.templates.filter { templateIds.contains($0.id) }
-            return templates.compactMap { template in
+            return templates.filter { templateIds.contains($0.id) }.compactMap { template in
                 makeVirtualSeed(
                     template: template,
                     dayStart: dayStart,
@@ -181,7 +189,7 @@ enum DayBuilder {
             }
 
         case .normal:
-            return context.templates.compactMap { template in
+            return templates.compactMap { template in
                 guard let rrule = template.rrule, rruleMatches(rrule, on: dayStart, calendar: context.calendar) else {
                     return nil
                 }
@@ -256,19 +264,20 @@ enum DayBuilder {
                 task: task,
                 membership: membership,
                 visibleRange: visibleRange,
-                origin: origin
+                origin: origin,
+                isVirtual: false
             )
         }
     }
 
     private static func editedTemplateIds(
-        entities: [DayScheduledTask],
+        tasks: [ScheduledTask],
         targetDayStart: Date,
         calendar: Calendar
     ) -> Set<UUID> {
-        Set(entities.compactMap { dayTask -> UUID? in
-            guard let templateId = dayTask.task.templateId else { return nil }
-            let scheduledDay = calendar.startOfDay(for: dayTask.task.startAt)
+        Set(tasks.compactMap { task -> UUID? in
+            guard let templateId = task.templateId else { return nil }
+            let scheduledDay = calendar.startOfDay(for: task.startAt)
             guard scheduledDay == targetDayStart else { return nil }
             return templateId
         })

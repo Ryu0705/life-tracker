@@ -1,10 +1,12 @@
 import SwiftUI
 
 /// 週帯 (月〜日)。トレーニング実施日の閲覧専用: 点は「記録がある日」の事実だけ (連続日数・ヒートマップは ContinuityRow と分析画面が受け持つ)。
-/// 今日タブの日付ナビとは連動しない (Round 7 で役割分担を決め直す)
+/// 「予定」タブも同じ部品を使う (allowsFuture = true で未来の日・次の週へ移れる)。選んでいる日は連動しない
 struct WeekStripView: View {
     let selectedDay: Date
     let today: Date
+    /// true = 未来の日も押せる・今週でも › が押せる (予定タブ)。false = 今日まで (トレーニング)
+    let allowsFuture: Bool
     let recordedDays: Set<Date>
     let calendar: Calendar
     let onSelect: (Date) -> Void
@@ -26,7 +28,7 @@ struct WeekStripView: View {
                 Image(systemName: "chevron.right")
                     .frame(width: 32, height: 44)
             }
-            .disabled(isCurrentWeek)
+            .disabled(isCurrentWeek && !allowsFuture)
             .accessibilityLabel("次の週")
         }
         .padding(.horizontal, 4)
@@ -36,7 +38,7 @@ struct WeekStripView: View {
     private func dayCell(_ day: Date) -> some View {
         let isToday = calendar.isDate(day, inSameDayAs: today)
         let isSelected = calendar.isDate(day, inSameDayAs: selectedDay)
-        let isSelectable = WorkoutSummary.isSelectable(day: day, today: today, calendar: calendar)
+        let isSelectable = allowsFuture || WorkoutSummary.isSelectable(day: day, today: today, calendar: calendar)
         let isRecorded = recordedDays.contains(WorkoutSummary.dayKey(day, calendar: calendar))
         return Button { onSelect(day) } label: {
             VStack(spacing: 2) {

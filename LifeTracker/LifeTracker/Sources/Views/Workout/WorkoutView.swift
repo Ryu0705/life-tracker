@@ -214,7 +214,7 @@ struct WorkoutView: View {
                         isEditingGoal = true
                     }
                 }
-                WeekStripView(selectedDay: displayedDay, today: today, recordedDays: recordedDays, calendar: calendar,
+                WeekStripView(selectedDay: displayedDay, today: today, allowsFuture: false, recordedDays: recordedDays, calendar: calendar,
                               onSelect: select, onShiftWeek: { select(WorkoutSummary.shiftWeek(selected: displayedDay, by: $0, today: today, calendar: calendar)) })
                 DaySummaryBar(day: displayedDay, isToday: selectedDay == nil, totals: WorkoutSummary.dayTotals(displayedSets),
                               calendar: calendar, onBackToToday: { selectedDay = nil })

@@ -17,6 +17,9 @@ struct DayScheduledTask: Identifiable, Hashable {
     let membership: DayMembership
     let visibleRange: DateInterval
     let origin: TaskOrigin
+    /// true = 世代から組み立てた仮想の回 (DB に行が無い)。false = 実体 (scheduled_task)。
+    /// 編集の分岐 (その日だけ変えた回か) に使う (レビュー DB §1-2)
+    var isVirtual: Bool = false
     var id: UUID { task.id }
 }
 

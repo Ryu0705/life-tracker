@@ -17,8 +17,8 @@ struct LifeTrackerApp: App {
             switch initResult {
             case .success(let sources):
                 TabView {
-                    Tab("今日", systemImage: "calendar") {
-                        HomeView(dataSource: sources.day)
+                    Tab("予定", systemImage: "calendar") {
+                        HomeView(dataSource: sources.day, scheduleSource: sources.schedule)
                             .environment(\.dayDataSource, sources.day)
                             .environmentObject(clockTick)
                     }
@@ -64,12 +64,23 @@ struct LifeTrackerApp: App {
                 }
             )
             var workout: WorkoutDataSource = SupabaseWorkoutDataSource(client: client)
+            var day: DayDataSource = dataSource
+            var schedule: ScheduleDataSource = dataSource
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-mock-workout") {
                 workout = WorkoutFixtures.makeMockDataSource()
             }
+            // 予定側もメモリ上にする (シミュレータ確認で本番 DB に書かない)。
+            // 今日の前後に「その日だけ変えた回」「除外日」「単発」を 1 つずつ入れる
+            if ProcessInfo.processInfo.arguments.contains("-mock-day") {
+                let mock = InMemoryScheduleDataSource.makeFixture(calendar: calendar, holidayChecker: { date in
+                    HolidayJp.isHoliday(date, calendar: calendar)
+                }, withSamples: true)
+                day = mock
+                schedule = mock
+            }
             #endif
-            return .success(AppDataSources(day: dataSource, workout: workout))
+            return .success(AppDataSources(day: day, workout: workout, schedule: schedule))
         } catch {
             return .failure(error)
         }
@@ -80,4 +91,5 @@ struct LifeTrackerApp: App {
 struct AppDataSources {
     let day: DayDataSource
     let workout: WorkoutDataSource
+    let schedule: ScheduleDataSource
 }
