@@ -25,6 +25,10 @@ protocol WorkoutDataSource {
 
     func fetchSets(sessionId: UUID) async throws -> [WorkoutSet]
     func addSet(_ set: NewWorkoutSet) async throws -> WorkoutSet
+    /// 記録済みの行の値 (重さ・回数・時間・距離・ウォームアップ) を書き換える。completed_at・set_index は変えない
+    func updateSet(id: UUID, values: WorkoutSetInput.Validated) async throws -> WorkoutSet
+    /// 削除して、同じセッション×種目の残りの set_index を 1..n に詰め直す (RPC workout_set_delete で 1 トランザクション)。
+    /// 無い id は何もしない
     func deleteSet(id: UUID) async throws
 
     /// 指定種目の全セット (前回参照・推移グラフ・履歴の元データ。日ごとのまとめは WorkoutProgress)
@@ -107,6 +111,19 @@ enum WorkoutLogic {
     static func nextSetIndex(for exerciseId: UUID, in sets: [WorkoutSet]) -> Int {
         let current = sets.filter { $0.exerciseId == exerciseId }.map(\.setIndex).max() ?? 0
         return current + 1
+    }
+
+    /// 削除後の set_index の詰め直し (RPC workout_set_delete の写し)。消した行と同じセッション×種目の残りを
+    /// set_index 順に 1..n に振り直し、それ以外の行はそのまま返す。並び順は入力のまま
+    static func removingAndRenumbering(_ removed: WorkoutSet, from sets: [WorkoutSet]) -> [WorkoutSet] {
+        let remaining = sets.filter { $0.id != removed.id }
+        let group = remaining
+            .filter { $0.sessionId == removed.sessionId && $0.exerciseId == removed.exerciseId }
+            .sorted { ($0.setIndex, $0.id.uuidString) < ($1.setIndex, $1.id.uuidString) }
+        let newIndex = Dictionary(uniqueKeysWithValues: group.enumerated().map { ($1.id, $0 + 1) })
+        return remaining.map { set in
+            newIndex[set.id].map { set.with(setIndex: $0) } ?? set
+        }
     }
 
     /// セッション内のセットを種目ごとにまとめる。種目の並びは最初に記録した順、セットは set_index 順

@@ -142,11 +142,19 @@ final class SupabaseWorkoutDataSource: WorkoutDataSource {
             .value
     }
 
-    func deleteSet(id: UUID) async throws {
+    func updateSet(id: UUID, values: WorkoutSetInput.Validated) async throws -> WorkoutSet {
         try await client.from("workout_set")
-            .delete()
+            .update(SetValuesUpdate(values))
             .eq("id", value: id.uuidString)
+            .select()
+            .single()
             .execute()
+            .value
+    }
+
+    /// 削除と詰め直しは 1 トランザクションで行う必要があるため RPC (0008)
+    func deleteSet(id: UUID) async throws {
+        try await client.rpc("workout_set_delete", params: ["p_id": id.uuidString]).execute()
     }
 
     func fetchExerciseSets(exerciseId: UUID) async throws -> [WorkoutSet] {
@@ -265,4 +273,26 @@ private struct RoutineArchiveUpdate: Encodable {
 
 private struct SessionEndUpdate: Encodable {
     let endedAt: Date
+}
+
+/// 記録済みセットの値の UPDATE。空の列も null で送る (合成の Encodable は nil の列を省き、古い値が残るため)
+private struct SetValuesUpdate: Encodable {
+    let values: WorkoutSetInput.Validated
+
+    init(_ values: WorkoutSetInput.Validated) {
+        self.values = values
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case weight, reps, durationSec, distanceM, isWarmup
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(values.weight, forKey: .weight)
+        try c.encode(values.reps, forKey: .reps)
+        try c.encode(values.durationSec, forKey: .durationSec)
+        try c.encode(values.distanceM, forKey: .distanceM)
+        try c.encode(values.isWarmup, forKey: .isWarmup)
+    }
 }

@@ -240,15 +240,75 @@ final class WorkoutSessionStore: ObservableObject {
         }
     }
 
+    /// 記録済みの行の編集 (入力シートの「保存」)。completed_at・set_index は変えない。休憩タイマーには触れない
+    @discardableResult
+    func updateSet(_ set: WorkoutSet, exercise: Exercise, input: WorkoutSetInput) async -> Result<WorkoutSet, Error> {
+        guard !isWriting else { return .failure(StoreError.busy) }
+        let validated: WorkoutSetInput.Validated
+        switch input.validate(for: exercise.metricKind) {
+        case .failure(let validationError): return .failure(validationError)
+        case .success(let v): validated = v
+        }
+
+        isWriting = true
+        defer { isWriting = false }
+        do {
+            let updated = try await dataSource.updateSet(id: set.id, values: validated)
+            replace(updated)
+            return .success(updated)
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    /// スワイプの削除。後ろのセットの番号は詰める (DB は RPC で、ローカルは同じ規則で振り直す)
     @discardableResult
     func deleteSet(_ set: WorkoutSet) async -> Error? {
+        guard !isWriting else { return StoreError.busy }
+        isWriting = true
+        defer { isWriting = false }
+        return await removeOnServer(set)
+    }
+
+    /// ✓ の取り消し: 行を DB から消し、同じ値で未保存の行の先頭に戻す (確認なし。失うのは記録時刻だけ)。
+    /// 成功したら戻した行の id を返す
+    @discardableResult
+    func undoSet(_ set: WorkoutSet) async -> Result<UUID, Error> {
+        guard !isWriting else { return .failure(StoreError.busy) }
+        isWriting = true
+        defer { isWriting = false }
+        if let error = await removeOnServer(set) { return .failure(error) }
+        let draft = DraftSet(input: WorkoutLogic.input(from: set, keepWarmup: true))
+        drafts[set.exerciseId, default: []].insert(draft, at: 0)
+        return .success(draft.id)
+    }
+
+    /// 削除して sets・history の番号を詰め直す。失敗時は削除が通って応答だけ失われた可能性があるため、サーバーに合わせ直す
+    private func removeOnServer(_ set: WorkoutSet) async -> Error? {
         do {
             try await dataSource.deleteSet(id: set.id)
-            sets.removeAll { $0.id == set.id }
-            history[set.exerciseId]?.removeAll { $0.id == set.id }
+            sets = WorkoutLogic.removingAndRenumbering(set, from: sets)
+            if let loaded = history[set.exerciseId] {
+                history[set.exerciseId] = WorkoutLogic.removingAndRenumbering(set, from: loaded)
+            }
             return nil
         } catch {
-            return Self.isCancellation(error) ? nil : error
+            if Self.isCancellation(error) { return nil }
+            if let refreshed = try? await dataSource.fetchSets(sessionId: set.sessionId), set.sessionId == session?.id {
+                sets = refreshed
+            }
+            if history[set.exerciseId] != nil,
+               let refreshedHistory = try? await dataSource.fetchExerciseSets(exerciseId: set.exerciseId) {
+                history[set.exerciseId] = refreshedHistory
+            }
+            return error
+        }
+    }
+
+    private func replace(_ updated: WorkoutSet) {
+        if let index = sets.firstIndex(where: { $0.id == updated.id }) { sets[index] = updated }
+        if let index = history[updated.exerciseId]?.firstIndex(where: { $0.id == updated.id }) {
+            history[updated.exerciseId]?[index] = updated
         }
     }
 

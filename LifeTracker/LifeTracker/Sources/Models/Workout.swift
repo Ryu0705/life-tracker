@@ -93,3 +93,19 @@ struct WorkoutSet: Codable, Identifiable, Hashable {
     let isWarmup: Bool
     let completedAt: Date?
 }
+
+extension WorkoutSet {
+    /// 詰め直し後の番号 (WorkoutLogic.removingAndRenumbering)
+    func with(setIndex: Int) -> WorkoutSet {
+        WorkoutSet(id: id, sessionId: sessionId, exerciseId: exerciseId, setIndex: setIndex,
+                   weight: weight, reps: reps, durationSec: durationSec, distanceM: distanceM,
+                   rpe: rpe, isWarmup: isWarmup, completedAt: completedAt)
+    }
+
+    /// 編集後の値。completed_at・set_index はそのまま
+    func with(values: WorkoutSetInput.Validated) -> WorkoutSet {
+        WorkoutSet(id: id, sessionId: sessionId, exerciseId: exerciseId, setIndex: setIndex,
+                   weight: values.weight, reps: values.reps, durationSec: values.durationSec, distanceM: values.distanceM,
+                   rpe: rpe, isWarmup: values.isWarmup, completedAt: completedAt)
+    }
+}

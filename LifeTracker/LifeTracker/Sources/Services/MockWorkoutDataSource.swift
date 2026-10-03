@@ -142,8 +142,16 @@ final class MockWorkoutDataSource: WorkoutDataSource {
         return set
     }
 
+    func updateSet(id: UUID, values: WorkoutSetInput.Validated) async throws -> WorkoutSet {
+        guard let index = sets.firstIndex(where: { $0.id == id }) else { throw MockError.notFound }
+        sets[index] = sets[index].with(values: values)
+        return sets[index]
+    }
+
+    /// RPC workout_set_delete と同じく、残りの set_index を 1..n に詰め直す
     func deleteSet(id: UUID) async throws {
-        sets.removeAll { $0.id == id }
+        guard let target = sets.first(where: { $0.id == id }) else { return }
+        sets = WorkoutLogic.removingAndRenumbering(target, from: sets)
     }
 
     func fetchExerciseSets(exerciseId: UUID) async throws -> [WorkoutSet] {

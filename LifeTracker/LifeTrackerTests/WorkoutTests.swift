@@ -430,3 +430,146 @@ struct WorkoutSessionStoreTests {
         #expect(!WorkoutSessionStore.isCancellation(URLError(.notConnectedToInternet)))
     }
 }
+
+@Suite("記録済みセットの編集・取り消し・削除の詰め直し (2026-10-03)")
+@MainActor
+struct WorkoutSetEditTests {
+    let bench = exercise("ベンチプレス", .weightReps)
+
+    /// 今日 07:00 から 3 分おきに重量 60・65・70 の 3 セットを記録した store
+    private func recordedStore() async -> (MockWorkoutDataSource, WorkoutSessionStore, TestClock) {
+        let clock = TestClock("2026-10-03T07:00:00+09:00")
+        let source = MockWorkoutDataSource(exercises: [bench])
+        let store = WorkoutSessionStore(dataSource: source, calendar: jst, now: { clock.now })
+        await store.load()
+        await store.addPlannedExercise(bench.id)
+        for weight in [60.0, 65, 70] {
+            _ = await store.addSet(exercise: bench, input: WorkoutSetInput(weight: weight, reps: 10))
+            clock.now = clock.now.addingTimeInterval(180)
+        }
+        return (source, store, clock)
+    }
+
+    @Test("Mock の削除は同じセッション×種目の残りだけを 1..n に詰め、他の種目・セッションは触らない。無い id は何もしない")
+    func mockDeleteRenumbers() async throws {
+        let session = UUID(), other = UUID(), squat = UUID()
+        let target = set(session: session, exercise: bench.id, index: 2)
+        let source = MockWorkoutDataSource(sets: [
+            set(session: session, exercise: bench.id, index: 1),
+            target,
+            set(session: session, exercise: bench.id, index: 4),
+            set(session: session, exercise: squat, index: 3),
+            set(session: other, exercise: bench.id, index: 5),
+        ])
+        try await source.deleteSet(id: target.id)
+        #expect(source.sets.filter { $0.sessionId == session && $0.exerciseId == bench.id }.map(\.setIndex).sorted() == [1, 2])
+        #expect(source.sets.first { $0.exerciseId == squat }?.setIndex == 3)
+        #expect(source.sets.first { $0.sessionId == other }?.setIndex == 5)
+
+        try await source.deleteSet(id: UUID())
+        #expect(source.sets.count == 4)
+    }
+
+    @Test("スワイプ削除: DB・今日の sets・履歴の番号が 1..n に詰まり、次の記録は n+1 で重複しない")
+    func deleteRenumbersStoreAndHistory() async throws {
+        let (source, store, _) = await recordedStore()
+        let middle = try #require(store.sets(for: bench.id).first { $0.setIndex == 2 })
+        #expect(await store.deleteSet(middle) == nil)
+
+        #expect(source.sets.map(\.setIndex).sorted() == [1, 2])
+        #expect(store.sets(for: bench.id).map(\.setIndex) == [1, 2])
+        #expect(store.sets(for: bench.id).map(\.weight) == [60, 70])
+        #expect(store.history[bench.id]?.sorted { $0.setIndex < $1.setIndex }.map(\.weight) == [60, 70])
+        #expect(store.history[bench.id]?.map(\.setIndex).sorted() == [1, 2])
+
+        let result = await store.addSet(exercise: bench, input: WorkoutSetInput(weight: 75, reps: 8))
+        #expect((try? result.get())?.setIndex == 3)
+        #expect(source.sets.map(\.setIndex).sorted() == [1, 2, 3])
+    }
+
+    @Test("✓ の取り消し: DB から消え、同じ値 (ウォームアップ区分も) で未保存の行の先頭に戻り、番号が詰まる")
+    func undoRestoresDraft() async throws {
+        let (source, store, _) = await recordedStore()
+        _ = await store.addSet(exercise: bench, input: WorkoutSetInput(weight: 40, reps: 12, isWarmup: true))
+        let draftsBefore = store.drafts[bench.id] ?? []
+        let first = try #require(store.sets(for: bench.id).first)
+        let last = try #require(store.sets(for: bench.id).last)
+
+        let draftId = try (await store.undoSet(last)).get()
+        #expect(store.drafts[bench.id]?.first?.id == draftId)
+        #expect(store.drafts[bench.id]?.first?.input == WorkoutSetInput(weight: 40, reps: 12, isWarmup: true))
+        #expect(store.drafts[bench.id]?.count == draftsBefore.count + 1)
+        #expect(!source.sets.contains { $0.id == last.id })
+
+        _ = try (await store.undoSet(first)).get()
+        #expect(store.drafts[bench.id]?.prefix(2).map(\.input.weight) == [60, 40])
+        #expect(source.sets.sorted { $0.setIndex < $1.setIndex }.map(\.weight) == [65, 70])
+        #expect(source.sets.map(\.setIndex).sorted() == [1, 2])
+        #expect(store.sets(for: bench.id).map(\.setIndex) == [1, 2])
+        #expect(store.history[bench.id]?.count == 2)
+    }
+
+    @Test("取り消し → 再 ✓ で番号は 1..n のまま、記録時刻は押し直した時刻になる")
+    func undoThenRecompleteKeepsSequence() async throws {
+        let (source, store, clock) = await recordedStore()
+        let second = try #require(store.sets(for: bench.id).first { $0.setIndex == 2 })
+        let draftId = try (await store.undoSet(second)).get()
+        clock.now = clock.now.addingTimeInterval(60)
+        let redone = try (await store.completeDraft(exercise: bench, draftId: draftId)).get()
+        #expect(redone.weight == 65)
+        #expect(redone.setIndex == 3)
+        #expect(redone.completedAt == clock.now)
+        #expect(source.sets.map(\.setIndex).sorted() == [1, 2, 3])
+    }
+
+    @Test("今日の唯一のセットを取り消すと今日は未記録に戻る (継続の recordedToday = !sets.isEmpty)")
+    func undoOnlySetClearsRecordedToday() async throws {
+        let clock = TestClock("2026-10-03T07:00:00+09:00")
+        let source = MockWorkoutDataSource(exercises: [bench])
+        let store = WorkoutSessionStore(dataSource: source, calendar: jst, now: { clock.now })
+        await store.load()
+        await store.addPlannedExercise(bench.id)
+        let only = try (await store.addSet(exercise: bench, input: WorkoutSetInput(weight: 60, reps: 10))).get()
+        _ = try (await store.undoSet(only)).get()
+        #expect(store.sets.isEmpty)
+        #expect(try await source.fetchTrainingDays().isEmpty)
+        #expect(store.todayExerciseIds == [bench.id]) // カードは残り、戻した行から記録し直せる
+    }
+
+    @Test("編集: 値とウォームアップだけが変わり、completed_at・set_index は変わらない。履歴・合計にも反映される")
+    func editKeepsTimeAndIndex() async throws {
+        let (source, store, clock) = await recordedStore()
+        let second = try #require(store.sets(for: bench.id).first { $0.setIndex == 2 })
+        clock.now = clock.now.addingTimeInterval(600)
+
+        let updated = try (await store.updateSet(second, exercise: bench,
+                                                 input: WorkoutSetInput(weight: 67.5, reps: 7, isWarmup: true))).get()
+        #expect(updated.id == second.id)
+        #expect(updated.completedAt == second.completedAt)
+        #expect(updated.setIndex == 2)
+        #expect(updated.weight == 67.5 && updated.reps == 7 && updated.isWarmup)
+        #expect(source.sets.first { $0.id == second.id } == updated)
+        #expect(store.sets(for: bench.id).map(\.weight) == [60, 67.5, 70])
+        #expect(store.history[bench.id]?.first { $0.id == second.id } == updated)
+        #expect(WorkoutSummary.dayTotals(store.sets) == WorkoutSummary.dayTotals(source.sets))
+    }
+
+    @Test("編集のバリデーションは addSet と同じ (回数が空なら書き込まない)")
+    func editValidates() async throws {
+        let (source, store, _) = await recordedStore()
+        let first = try #require(store.sets(for: bench.id).first)
+        let result = await store.updateSet(first, exercise: bench, input: WorkoutSetInput(weight: 60, reps: nil))
+        guard case .failure(let error) = result else { Issue.record("空の回数で保存できた"); return }
+        #expect(error as? WorkoutSetInput.ValidationError == .missingReps)
+        #expect(source.sets.first { $0.id == first.id } == first)
+    }
+
+    @Test("WorkoutLogic.removingAndRenumbering は欠番のある並びも 1..n にする")
+    func renumberWithGaps() {
+        let session = UUID()
+        let sets = [1, 3, 4, 7].map { set(session: session, exercise: bench.id, index: $0) }
+        let result = WorkoutLogic.removingAndRenumbering(sets[1], from: sets)
+        #expect(result.map(\.setIndex) == [1, 2, 3])
+        #expect(result.map(\.id) == [sets[0].id, sets[2].id, sets[3].id])
+    }
+}

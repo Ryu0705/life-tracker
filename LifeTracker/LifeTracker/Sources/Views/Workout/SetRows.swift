@@ -78,36 +78,56 @@ struct SetHeaderRow: View {
     }
 }
 
-/// 記録済みの行 (読み取りのみ。削除はスワイプ、編集は Round 4)
+/// 記録済みの行。行タップで入力シート (値の編集)、緑の ✓ タップで取り消し (未保存の行に戻す)、削除はスワイプ。
+/// 過去日 (PastDayView) は対象外で読み取りのみ (2026-10-03 本人要望・docs/gymwork-alignment-design.md)
 struct CompletedSetRow: View {
     let label: String
     let previous: String?
     let set: WorkoutSet
     let columns: [SetColumn]
+    let isSelected: Bool
+    let isWriting: Bool
+    let onEdit: () -> Void
+    let onUndo: () -> Void
 
     var body: some View {
         let input = WorkoutLogic.input(from: set, keepWarmup: true)
         HStack(spacing: 8) {
-            Text(label)
-                .font(.callout.monospacedDigit().bold())
-                .foregroundStyle(set.isWarmup ? .orange : .primary)
-                .frame(width: SetRowLayout.labelWidth + 8, alignment: .leading)
-            Text(previous ?? "—")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            ForEach(columns) { column in
-                Text(column.display(input[keyPath: column.keyPath]))
-                    .font(.body.monospacedDigit().bold())
-                    .frame(width: SetRowLayout.valueWidth)
+            Button(action: onEdit) {
+                HStack(spacing: 8) {
+                    Text(label)
+                        .font(.callout.monospacedDigit().bold())
+                        .foregroundStyle(set.isWarmup ? Color.orange : Color.primary)
+                        .frame(width: SetRowLayout.labelWidth + 8, alignment: .leading)
+                    Text(previous ?? "—")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    ForEach(columns) { column in
+                        Text(column.display(input[keyPath: column.keyPath]))
+                            .font(.body.monospacedDigit().bold())
+                            .foregroundStyle(Color.primary)
+                            .frame(width: SetRowLayout.valueWidth)
+                    }
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
             }
-            Image(systemName: "checkmark.circle.fill")
-                .font(.title2)
-                .foregroundStyle(.green)
-                .frame(width: SetRowLayout.checkWidth, height: 44)
+            .buttonStyle(.borderless)
+            .accessibilityHint("タップで編集")
+            Button(action: onUndo) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(Color.green)
+                    .frame(width: SetRowLayout.checkWidth, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .disabled(isWriting)
+            .accessibilityLabel("セット\(label)の記録を取り消す")
         }
-        .listRowBackground(Color.green.opacity(0.12))
+        .listRowBackground(isSelected ? Color.accentColor.opacity(0.12) : Color.green.opacity(0.12))
     }
 }
 
@@ -162,7 +182,7 @@ struct DraftSetRow: View {
 }
 
 /// 行をタップしたときの入力シート (Gymwork 型)。大きな数字 + 小刻み・大刻みの ± 、
-/// 「残りのセットに適用」「セット完了」。完了すると次の未保存の行へ進む
+/// 未保存の行は「残りのセットに適用」「セット完了」(完了すると次の未保存の行へ進む)、記録済みの行は「保存」だけ
 struct SetEditorSheet: View {
     let title: String
     let columns: [SetColumn]
@@ -171,8 +191,10 @@ struct SetEditorSheet: View {
     let message: String?
     /// 休憩の終わり。休憩中だけ題名の下に残り時間を出す (シートが休憩バーを隠すため)
     let restEndsAt: Date?
-    let onApplyToRemaining: () -> Void
+    /// nil = 記録済みの行の編集 (「残りのセットに適用」を出さない)
+    let onApplyToRemaining: (() -> Void)?
     let onComplete: () -> Void
+    var completeTitle = "セット完了"
 
     /// シートの中では .keyboard のツールバーが出ない (NavigationStack で包んでも出なかった) ため、
     /// キーボードが出ている間だけ題名の行に「完了」を出す
@@ -227,14 +249,16 @@ struct SetEditorSheet: View {
                     .foregroundStyle(.red)
             }
             HStack(spacing: 10) {
-                Button(action: onApplyToRemaining) {
-                    Text("残りのセットに適用")
-                        .font(.callout.bold())
-                        .frame(maxWidth: .infinity, minHeight: 48)
+                if let onApplyToRemaining {
+                    Button(action: onApplyToRemaining) {
+                        Text("残りのセットに適用")
+                            .font(.callout.bold())
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.bordered)
                 Button(action: onComplete) {
-                    Label("セット完了", systemImage: "checkmark")
+                    Label(completeTitle, systemImage: "checkmark")
                         .font(.callout.bold())
                         .frame(maxWidth: .infinity, minHeight: 48)
                 }

@@ -46,16 +46,20 @@ struct RestTimerLiveActivity: Widget {
             } compactTrailing: {
                 countdown(context.state.endsAt)
                     .monospacedDigit()
-                    .frame(maxWidth: 44)
+                    .frame(width: 44)
             } minimal: {
-                Image(systemName: "timer")
+                // 他アプリの Live Activity と並んだときの小さい丸。アイコンでなく残り時間を出す
+                countdown(context.state.endsAt)
+                    .font(.caption2.monospacedDigit())
+                    .minimumScaleFactor(0.7)
             }
         }
     }
 
-    /// 0 で止まるカウントダウン (表示側で数えるので、アプリが止まっていても進む)
+    /// 0 で止まるカウントダウン (表示側で数えるので、アプリが止まっていても進む)。
+    /// 休憩は 1 時間未満なので時の桁を出さない (出すと 0:00:00 ぶんの幅を取り、Dynamic Island の狭い枠で欠ける)
     private func countdown(_ endsAt: Date) -> some View {
-        Text(timerInterval: Date.now...max(endsAt, Date.now), countsDown: true)
+        Text(timerInterval: Date.now...max(endsAt, Date.now), countsDown: true, showsHours: false)
             .multilineTextAlignment(.trailing)
     }
 }

@@ -23,9 +23,11 @@ struct WorkoutView: View {
     @State private var restEndsAt: Date?
     /// 休憩の元になったセット (Live Activity と通知の文言)
     @State private var restTitle = ""
+    /// 休憩を動かしたセット。そのセットの ✓ を取り消したら休憩も止める
+    @State private var restSetId: UUID?
     @State private var restFinishedCount = 0
-    /// 入力シートで編集中の行
-    @State private var editing: DraftTarget?
+    /// 入力シートで編集中の行 (未保存の行 / 記録済みの行)
+    @State private var editing: EditorTarget?
     /// 次に押す行 (セット完了で 1 つ下へ進む)
     @State private var selectedDraftId: UUID?
     /// 自己ベスト更新などの一時表示
@@ -36,10 +38,16 @@ struct WorkoutView: View {
     /// 休憩の既定秒数 (Gymwork の推奨 3:00 に合わせる)
     static let restSeconds: TimeInterval = 180
 
-    struct DraftTarget: Identifiable, Hashable {
-        let exerciseId: UUID
-        let draftId: UUID
-        var id: UUID { draftId }
+    enum EditorTarget: Identifiable, Hashable {
+        case draft(exerciseId: UUID, draftId: UUID)
+        case completed(exerciseId: UUID, setId: UUID)
+
+        var id: UUID {
+            switch self {
+            case .draft(_, let draftId): return draftId
+            case .completed(_, let setId): return setId
+            }
+        }
     }
 
     enum PickerRequest: Identifiable {
@@ -298,13 +306,19 @@ struct WorkoutView: View {
                     label: numbers[position],
                     previous: previousSummary(exercise, position: position),
                     set: set,
-                    columns: columns
+                    columns: columns,
+                    isSelected: editing == .completed(exerciseId: exercise.id, setId: set.id),
+                    isWriting: store.isWriting,
+                    onEdit: { editing = .completed(exerciseId: exercise.id, setId: set.id) },
+                    onUndo: { Task { await undo(exercise, set: set) } }
                 )
                 .swipeActions(allowsFullSwipe: false) {
                     Button("削除", role: .destructive) {
                         Task {
                             if let error = await store.deleteSet(set) {
                                 messages[exercise.id] = "削除できませんでした: \(error.localizedDescription)"
+                            } else if editing == .completed(exerciseId: exercise.id, setId: set.id) {
+                                editing = nil
                             }
                         }
                     }
@@ -317,9 +331,9 @@ struct WorkoutView: View {
                     previous: previousSummary(exercise, position: position),
                     input: draft.input,
                     columns: columns,
-                    isSelected: selectedDraftId == draft.id || editing?.draftId == draft.id,
+                    isSelected: selectedDraftId == draft.id || editing == .draft(exerciseId: exercise.id, draftId: draft.id),
                     isWriting: store.isWriting,
-                    onEdit: { editing = DraftTarget(exerciseId: exercise.id, draftId: draft.id) },
+                    onEdit: { editing = .draft(exerciseId: exercise.id, draftId: draft.id) },
                     onComplete: { Task { await complete(exercise, draftId: draft.id) } }
                 )
                 .swipeActions(allowsFullSwipe: false) {
@@ -475,24 +489,84 @@ struct WorkoutView: View {
     private static let editorHeight: CGFloat = 400
 
     @ViewBuilder
-    private func editorSheet(_ target: DraftTarget) -> some View {
-        if let exercise = store.exercisesById[target.exerciseId] {
-            let rows = store.drafts[target.exerciseId] ?? []
-            let number = Self.setNumbers(warmups: store.sets(for: target.exerciseId).map(\.isWarmup) + rows.map(\.input.isWarmup))
-            let position = store.sets(for: target.exerciseId).count + (rows.firstIndex { $0.id == target.draftId } ?? 0)
+    private func editorSheet(_ target: EditorTarget) -> some View {
+        switch target {
+        case .draft(let exerciseId, let draftId):
+            draftEditorSheet(exerciseId: exerciseId, draftId: draftId)
+        case .completed(let exerciseId, let setId):
+            // 取り消し・削除で行が無くなったら何も出さない (それぞれの操作でシートも閉じる)
+            if let exercise = store.exercisesById[exerciseId], let set = store.sets.first(where: { $0.id == setId }) {
+                let completed = store.sets(for: exerciseId)
+                let rows = store.drafts[exerciseId] ?? []
+                let number = Self.setNumbers(warmups: completed.map(\.isWarmup) + rows.map(\.input.isWarmup))
+                let position = completed.firstIndex { $0.id == setId } ?? 0
+                CompletedSetEditor(
+                    title: "\(exercise.name)  セット\(number.indices.contains(position) ? number[position] : "")",
+                    columns: SetColumn.columns(for: exercise),
+                    initial: WorkoutLogic.input(from: set, keepWarmup: true),
+                    isWriting: store.isWriting,
+                    message: messages[exerciseId],
+                    restEndsAt: restEndsAt,
+                    onSave: { input in Task { await save(exercise, set: set, input: input) } }
+                )
+                .id(setId)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func draftEditorSheet(exerciseId: UUID, draftId: UUID) -> some View {
+        if let exercise = store.exercisesById[exerciseId] {
+            let rows = store.drafts[exerciseId] ?? []
+            let number = Self.setNumbers(warmups: store.sets(for: exerciseId).map(\.isWarmup) + rows.map(\.input.isWarmup))
+            let position = store.sets(for: exerciseId).count + (rows.firstIndex { $0.id == draftId } ?? 0)
             SetEditorSheet(
                 title: "\(exercise.name)  セット\(number.indices.contains(position) ? number[position] : "")",
                 columns: SetColumn.columns(for: exercise),
                 input: Binding(
-                    get: { rows.first { $0.id == target.draftId }?.input ?? WorkoutSetInput() },
-                    set: { store.updateDraft(exerciseId: target.exerciseId, draftId: target.draftId, input: $0) }
+                    get: { rows.first { $0.id == draftId }?.input ?? WorkoutSetInput() },
+                    set: { store.updateDraft(exerciseId: exerciseId, draftId: draftId, input: $0) }
                 ),
                 isWriting: store.isWriting,
-                message: messages[target.exerciseId],
+                message: messages[exerciseId],
                 restEndsAt: restEndsAt,
-                onApplyToRemaining: { store.applyToRemaining(exerciseId: target.exerciseId, from: target.draftId) },
-                onComplete: { Task { await complete(exercise, draftId: target.draftId) } }
+                onApplyToRemaining: { store.applyToRemaining(exerciseId: exerciseId, from: draftId) },
+                onComplete: { Task { await complete(exercise, draftId: draftId) } }
             )
+        }
+    }
+
+    /// 記録済みの行の編集を保存する。completed_at・set_index と休憩タイマーはそのまま
+    private func save(_ exercise: Exercise, set: WorkoutSet, input: WorkoutSetInput) async {
+        Self.dismissKeyboard()
+        switch await store.updateSet(set, exercise: exercise, input: input) {
+        case .success:
+            messages[exercise.id] = nil
+            editing = nil
+        case .failure(let error as WorkoutSetInput.ValidationError):
+            messages[exercise.id] = Self.validationMessage(for: error)
+        case .failure(WorkoutSessionStore.StoreError.busy):
+            break
+        case .failure(let error):
+            messages[exercise.id] = "保存できませんでした: \(error.localizedDescription)"
+        }
+    }
+
+    /// 緑の ✓ の取り消し: 未保存の行の先頭に戻して選択する。そのセットが動かしていた休憩は止める
+    private func undo(_ exercise: Exercise, set: WorkoutSet) async {
+        switch await store.undoSet(set) {
+        case .success(let draftId):
+            messages[exercise.id] = nil
+            if restSetId == set.id {
+                restEndsAt = nil
+                restSetId = nil
+            }
+            if editing == .completed(exerciseId: exercise.id, setId: set.id) { editing = nil }
+            selectedDraftId = draftId
+        case .failure(WorkoutSessionStore.StoreError.busy):
+            break
+        case .failure(let error):
+            messages[exercise.id] = "取り消せませんでした: \(error.localizedDescription)"
         }
     }
 
@@ -513,6 +587,7 @@ struct WorkoutView: View {
             let setCount = store.sets(for: exercise.id).filter { !$0.isWarmup }.count
             restTitle = set.isWarmup ? "\(exercise.name) ウォームアップ" : "\(exercise.name) セット\(setCount)"
             restEndsAt = Date().addingTimeInterval(Self.restSeconds)
+            restSetId = set.id
             if let bestBefore, let newBest = WorkoutProgress.bestOneRM([set]), newBest > bestBefore + 0.001 {
                 toast = "\(exercise.name) 推定1RM 自己ベスト \(ProgressMetric.estimatedOneRM.format(newBest))"
             }
@@ -557,5 +632,42 @@ struct WorkoutView: View {
     private var errorBinding: Binding<Bool> {
         Binding(get: { (store.error ?? historyStore.error ?? programStore.error) != nil },
                 set: { if !$0 { store.error = nil; historyStore.error = nil; programStore.error = nil } })
+    }
+}
+
+/// 記録済みの行の入力シート。保存するまで store には書かない (値はシートの中だけで持つ)
+private struct CompletedSetEditor: View {
+    let title: String
+    let columns: [SetColumn]
+    let isWriting: Bool
+    let message: String?
+    let restEndsAt: Date?
+    let onSave: (WorkoutSetInput) -> Void
+
+    @State private var input: WorkoutSetInput
+
+    init(title: String, columns: [SetColumn], initial: WorkoutSetInput, isWriting: Bool, message: String?,
+         restEndsAt: Date?, onSave: @escaping (WorkoutSetInput) -> Void) {
+        self.title = title
+        self.columns = columns
+        self.isWriting = isWriting
+        self.message = message
+        self.restEndsAt = restEndsAt
+        self.onSave = onSave
+        _input = State(initialValue: initial)
+    }
+
+    var body: some View {
+        SetEditorSheet(
+            title: title,
+            columns: columns,
+            input: $input,
+            isWriting: isWriting,
+            message: message,
+            restEndsAt: restEndsAt,
+            onApplyToRemaining: nil,
+            onComplete: { onSave(input) },
+            completeTitle: "保存"
+        )
     }
 }
