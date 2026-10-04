@@ -5,7 +5,7 @@
 --
 -- 追加のみ (今のビルドを壊さない):
 --   - task_template の中身の列と pattern_template_membership は残す。新しいビルドは読まない。
---     新しいビルドで実 DB の読み書きを確認できてから 0007 で削除する (本人 OK 後)
+--     新しいビルドで実 DB の読み書きを確認できてから 0011 で削除する (本人 OK 後。旧称 0007・0008・0010)
 --   - 新しい系列を RPC で作るときも task_template の旧列 (NOT NULL) は第 1 世代の中身で埋める (旧ビルド向けの写し。以後は更新しない)
 -- 順序: 表 → 索引 → 休日パターン → backfill → 関数。途中で止まっても続きを手で流せる
 -- 過去を守るトリガーは入れない (本人決定 3)。「過去日は書き換えない」は各関数の先頭の検査だけで守る。
@@ -160,7 +160,7 @@ BEGIN
   IF p_replace_single_id IS NOT NULL THEN
     PERFORM schedule_single_delete(p_replace_single_id);
   END IF;
-  -- 旧列は旧ビルド向けの写し (0007 で削除)
+  -- 旧列は旧ビルド向けの写し (0011 で削除。旧称 0007・0008・0010)
   INSERT INTO task_template (name, category_id, start_minutes_from_midnight, duration_minutes, rrule)
   VALUES (p_name, p_category_id, p_start, p_duration, p_rrule)
   RETURNING id INTO v_template_id;
