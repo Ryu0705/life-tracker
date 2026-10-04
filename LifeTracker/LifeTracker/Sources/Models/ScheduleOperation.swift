@@ -224,3 +224,19 @@ enum SchedulePlanner {
         )
     }
 }
+
+extension SchedulePlanner {
+    /// 予定の欄を読むだけで開く対象 (過去の回。段階 2 で実績欄だけ入力する)。回の日で組み立てる。
+    /// 系列の世代が引けない (終了済みなど) ときは、その回の中身だけを持つ形にする (予定の操作には使わない)
+    static func readOnlyTarget(for row: DayScheduledTask, catalog: ScheduleCatalog, calendar: Calendar) -> ScheduleEditTarget {
+        let day = calendar.startOfDay(for: row.task.startAt)
+        if let target = target(for: row, on: day, catalog: catalog, calendar: calendar) { return target }
+        let content = ScheduleContent(
+            name: row.task.name, categoryId: row.task.categoryId,
+            startMinutes: Int(row.task.startAt.timeIntervalSince(day) / 60),
+            durationMinutes: Int(row.task.endAt.timeIntervalSince(row.task.startAt) / 60)
+        )
+        return ScheduleEditTarget(date: day, kind: .single(id: row.task.id),
+                                  original: ScheduleEntryInput(content: content, repeatRule: .none), usual: nil)
+    }
+}

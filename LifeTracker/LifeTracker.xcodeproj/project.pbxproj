@@ -63,36 +63,26 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		42881E2DDBD85A88A4694C52 /* Shared */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = Shared;
 			sourceTree = "<group>";
 		};
 		BABB0A5138C17A8D0A98C24B /* RestTimerWidget */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = RestTimerWidget;
 			sourceTree = "<group>";
 		};
 		D86D16A92F9E3F2F0047F0EF /* LifeTracker */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = LifeTracker;
 			sourceTree = "<group>";
 		};
 		D86D16B72F9E3F300047F0EF /* LifeTrackerTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = LifeTrackerTests;
 			sourceTree = "<group>";
 		};
 		D86D16C12F9E3F300047F0EF /* LifeTrackerUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = LifeTrackerUITests;
 			sourceTree = "<group>";
 		};
@@ -192,8 +182,8 @@
 				A4FB2B03D569A23FA628BC6C /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				D86D16A92F9E3F2F0047F0EF /* LifeTracker */,
 				42881E2DDBD85A88A4694C52 /* Shared */,
+				D86D16A92F9E3F2F0047F0EF /* LifeTracker */,
 			);
 			name = LifeTracker;
 			packageProductDependencies = (
@@ -259,8 +249,8 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				BABB0A5138C17A8D0A98C24B /* RestTimerWidget */,
 				42881E2DDBD85A88A4694C52 /* Shared */,
+				BABB0A5138C17A8D0A98C24B /* RestTimerWidget */,
 			);
 			name = RestTimerWidget;
 			productName = RestTimerWidget;

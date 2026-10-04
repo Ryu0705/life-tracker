@@ -82,11 +82,13 @@ enum DayBuilder {
         let mergedScheduled = (scheduledFromEntities + virtualFiltered)
             .sorted { $0.task.startAt < $1.task.startAt }
 
+        // 時刻のある「やった」だけを時刻の範囲で並べる。スキップ (時刻なし) は records から丸の状態で扱う
         let actuals = context.actualTasks
             .compactMap { actual -> DayActualTask? in
-                guard let (membership, visibleRange) = computeMembership(
-                    startAt: actual.startAt,
-                    endAt: actual.endAt,
+                guard actual.status == .done, let startAt = actual.startAt, let endAt = actual.endAt,
+                      let (membership, visibleRange) = computeMembership(
+                    startAt: startAt,
+                    endAt: endAt,
                     dayStart: dayStart,
                     dayEnd: dayEnd,
                     calendar: context.calendar
@@ -99,9 +101,11 @@ enum DayBuilder {
                     visibleRange: visibleRange
                 )
             }
-            .sorted { $0.task.startAt < $1.task.startAt }
+            .sorted { $0.visibleRange.start < $1.visibleRange.start }
 
-        return Day(date: dayStart, scheduled: mergedScheduled, actual: actuals)
+        return Day(date: dayStart, scheduled: mergedScheduled, actual: actuals,
+                   records: context.actualTasks, workoutSetTimes: context.workoutSetTimes.sorted(),
+                   sleepRecords: context.sleepRecords.sorted { $0.startAt < $1.startAt })
     }
 
     // MARK: - Mode resolution

@@ -50,6 +50,8 @@ enum TemplateVersions {
         previousDayMeta: DayMeta?,
         scheduledTasks: [ScheduledTask],
         actualTasks: [ActualTask],
+        workoutSetTimes: [Date] = [],
+        sleepRecords: [SleepRecord] = [],
         holidayChecker: @escaping (Date) -> Bool,
         calendar: Calendar
     ) -> DayBuilderContext {
@@ -69,6 +71,8 @@ enum TemplateVersions {
             previousDayMeta: previousDayMeta,
             scheduledTasks: scheduledTasks,
             actualTasks: actualTasks,
+            workoutSetTimes: workoutSetTimes,
+            sleepRecords: sleepRecords,
             holidayChecker: holidayChecker,
             calendar: calendar
         )

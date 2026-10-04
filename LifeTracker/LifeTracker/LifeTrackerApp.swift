@@ -25,6 +25,10 @@ struct LifeTrackerApp: App {
                     Tab("トレーニング", systemImage: "dumbbell") {
                         WorkoutView(dataSource: sources.workout)
                     }
+                    Tab("睡眠", systemImage: "bed.double") {
+                        SleepView(dataSource: sources.sleep, dayDataSource: sources.day, scheduleDataSource: sources.schedule)
+                            .environmentObject(clockTick)
+                    }
                 }
             case .failure(let error):
                 ConfigErrorView(error: error)
@@ -66,6 +70,7 @@ struct LifeTrackerApp: App {
             var workout: WorkoutDataSource = SupabaseWorkoutDataSource(client: client)
             var day: DayDataSource = dataSource
             var schedule: ScheduleDataSource = dataSource
+            var sleep: SleepDataSource = dataSource
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-mock-workout") {
                 workout = WorkoutFixtures.makeMockDataSource()
@@ -78,9 +83,11 @@ struct LifeTrackerApp: App {
                 }, withSamples: true)
                 day = mock
                 schedule = mock
+                // 睡眠も同じインスタンス (睡眠タブで書いた記録が予定タブに出る)
+                sleep = mock
             }
             #endif
-            return .success(AppDataSources(day: day, workout: workout, schedule: schedule))
+            return .success(AppDataSources(day: day, workout: workout, schedule: schedule, sleep: sleep))
         } catch {
             return .failure(error)
         }
@@ -92,4 +99,5 @@ struct AppDataSources {
     let day: DayDataSource
     let workout: WorkoutDataSource
     let schedule: ScheduleDataSource
+    let sleep: SleepDataSource
 }
