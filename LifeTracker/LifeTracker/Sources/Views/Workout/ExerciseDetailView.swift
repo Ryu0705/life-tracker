@@ -24,7 +24,9 @@ struct ExerciseDetailView: View {
                                 Text(entry.day.formatted(.dateTime.year().month().day().weekday().locale(Locale(identifier: "ja_JP"))))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                                Text(entry.sets.map { WorkoutLogic.summary(of: $0, kind: exercise.metricKind) }.joined(separator: " / "))
+                                // 同じ日に 2 回やった種目は「60×10 / 65×8 ｜ 50×12 / 50×10」
+                                Text(WorkoutSummary.blocksText(entry.sets, kind: exercise.metricKind,
+                                                               entriesById: store.historyEntries, markWarmup: false))
                                     .font(.callout.monospacedDigit())
                             }
                         }

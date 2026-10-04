@@ -27,9 +27,21 @@ protocol WorkoutDataSource {
     func addSet(_ set: NewWorkoutSet) async throws -> WorkoutSet
     /// 記録済みの行の値 (重さ・回数・時間・距離・ウォームアップ) を書き換える。completed_at・set_index は変えない
     func updateSet(id: UUID, values: WorkoutSetInput.Validated) async throws -> WorkoutSet
-    /// 削除して、同じセッション×種目の残りの set_index を 1..n に詰め直す (RPC workout_set_delete で 1 トランザクション)。
+    /// 削除して、同じ entry の残りの set_index を 1..n に詰め直す。残りが 0 件ならその entry も消し、
+    /// 同じセッションの entry の sort_order を 1..n に詰める (RPC workout_set_delete で 1 トランザクション)。
     /// 無い id は何もしない
     func deleteSet(id: UUID) async throws
+
+    /// セッションの entry (カード) を sort_order 順で返す
+    func fetchEntries(sessionId: UUID) async throws -> [WorkoutEntry]
+    /// 複数セッションの entry (過去日・前回の対応用)。実装側でまとめて取る
+    func fetchEntries(sessionIds: [UUID]) async throws -> [WorkoutEntry]
+    /// 最初の ✓ で作る。UNIQUE (session_id, sort_order) に当たったら失敗する (別端末と同時の作成)
+    func addEntry(sessionId: UUID, exerciseId: UUID, sortOrder: Int) async throws -> WorkoutEntry
+    /// 空の entry (セット INSERT 前に落ちた残骸) を消す。セットが残っている entry は複合 FK で失敗する
+    func deleteEntry(id: UUID) async throws
+    /// 配列順に sort_order = 1..k、配列に無いそのセッションの entry は旧順で後ろへ (RPC workout_entry_reorder)
+    func reorderEntries(sessionId: UUID, entryIds: [UUID]) async throws
 
     /// 指定種目の全セット (前回参照・推移グラフ・履歴の元データ。日ごとのまとめは WorkoutProgress)
     func fetchExerciseSets(exerciseId: UUID) async throws -> [WorkoutSet]
@@ -51,6 +63,7 @@ protocol WorkoutDataSource {
 struct NewWorkoutSet: Encodable, Hashable {
     let sessionId: UUID
     let exerciseId: UUID
+    let entryId: UUID
     let setIndex: Int
     let weight: Double?
     let reps: Int?
@@ -105,20 +118,46 @@ struct WorkoutSetInput: Hashable {
     }
 }
 
+/// 今日の画面のカード 1 枚。entryId は最初の ✓ で入る (それまでは予定 = メモリだけ)。
+/// 同じ種目のカードを何枚でも置ける (docs/gymwork-design-duplicate-and-reorder.md)
+struct TodayCard: Identifiable, Hashable {
+    let id: UUID
+    let exerciseId: UUID
+    var entryId: UUID?
+}
+
 /// 画面が使う pure な導出。DB / Singleton に触れない
 enum WorkoutLogic {
-    /// 同一セッション・同一種目の次の set_index (UNIQUE (session_id, exercise_id, set_index) を満たす)
-    static func nextSetIndex(for exerciseId: UUID, in sets: [WorkoutSet]) -> Int {
-        let current = sets.filter { $0.exerciseId == exerciseId }.map(\.setIndex).max() ?? 0
+    /// 画面のカードを DB の entry に合わせる: 未記録のカードは位置ごと残し、記録済みのカードの枠には
+    /// entry を sort_order 順に入れ直す。カードの無い entry は末尾に足し、消えた entry のカードは未記録に戻す
+    static func reconcile(_ cards: [TodayCard], with entries: [WorkoutEntry]) -> [TodayCard] {
+        let alive = Set(entries.map(\.id))
+        var result = cards.map { card -> TodayCard in
+            var c = card
+            if let id = c.entryId, !alive.contains(id) { c.entryId = nil }
+            return c
+        }
+        let known = Dictionary(result.compactMap { c in c.entryId.map { ($0, c) } }, uniquingKeysWith: { first, _ in first })
+        var ordered = entries.sorted { $0.sortOrder < $1.sortOrder }
+            .map { known[$0.id] ?? TodayCard(id: $0.id, exerciseId: $0.exerciseId, entryId: $0.id) }[...]
+        for index in result.indices where result[index].entryId != nil {
+            if let next = ordered.popFirst() { result[index] = next } else { result[index].entryId = nil }
+        }
+        return result + ordered
+    }
+
+    /// 同じ entry (カード) の次の set_index (UNIQUE (entry_id, set_index) を満たす)
+    static func nextSetIndex(forEntry entryId: UUID, in sets: [WorkoutSet]) -> Int {
+        let current = sets.filter { $0.entryId == entryId }.map(\.setIndex).max() ?? 0
         return current + 1
     }
 
-    /// 削除後の set_index の詰め直し (RPC workout_set_delete の写し)。消した行と同じセッション×種目の残りを
+    /// 削除後の set_index の詰め直し (RPC workout_set_delete の写し)。消した行と同じ entry の残りを
     /// set_index 順に 1..n に振り直し、それ以外の行はそのまま返す。並び順は入力のまま
     static func removingAndRenumbering(_ removed: WorkoutSet, from sets: [WorkoutSet]) -> [WorkoutSet] {
         let remaining = sets.filter { $0.id != removed.id }
         let group = remaining
-            .filter { $0.sessionId == removed.sessionId && $0.exerciseId == removed.exerciseId }
+            .filter { $0.entryId == removed.entryId }
             .sorted { ($0.setIndex, $0.id.uuidString) < ($1.setIndex, $1.id.uuidString) }
         let newIndex = Dictionary(uniqueKeysWithValues: group.enumerated().map { ($1.id, $0 + 1) })
         return remaining.map { set in
@@ -126,18 +165,67 @@ enum WorkoutLogic {
         }
     }
 
-    /// セッション内のセットを種目ごとにまとめる。種目の並びは最初に記録した順、セットは set_index 順
-    static func groupByExercise(_ sets: [WorkoutSet]) -> [(exerciseId: UUID, sets: [WorkoutSet])] {
-        var order: [UUID] = []
-        var bucket: [UUID: [WorkoutSet]] = [:]
-        let sorted = sets.sorted { lhs, rhs in
-            (lhs.completedAt ?? .distantPast, lhs.setIndex) < (rhs.completedAt ?? .distantPast, rhs.setIndex)
+    /// RPC workout_set_delete の entry 側の写し: entry のセットが 0 件なら entry を消し、
+    /// 同じセッションの sort_order を 1..n に詰める。セットが残っていれば entries をそのまま返す
+    static func pruningEntry(_ entryId: UUID, remainingSets: [WorkoutSet], entries: [WorkoutEntry]) -> [WorkoutEntry] {
+        guard !remainingSets.contains(where: { $0.entryId == entryId }),
+              let removed = entries.first(where: { $0.id == entryId }) else { return entries }
+        let kept = entries.filter { $0.id != entryId }
+        let sameSession = kept.filter { $0.sessionId == removed.sessionId }
+            .sorted { ($0.sortOrder, $0.id.uuidString) < ($1.sortOrder, $1.id.uuidString) }
+        let newOrder = Dictionary(uniqueKeysWithValues: sameSession.enumerated().map { ($1.id, $0 + 1) })
+        return kept.map { entry in newOrder[entry.id].map { entry.with(sortOrder: $0) } ?? entry }
+    }
+
+    /// RPC workout_entry_reorder の写し: 指定セッションの entry を配列順に 1..k、配列に無いものは旧順で k+1.. に。
+    /// 他のセッションの entry はそのまま。重複した id は最初の位置を使う
+    static func reordering(_ entries: [WorkoutEntry], sessionId: UUID, entryIds: [UUID]) -> [WorkoutEntry] {
+        var rank: [UUID: Int] = [:]
+        for (i, id) in entryIds.enumerated() where rank[id] == nil { rank[id] = i }
+        let sameSession = entries.filter { $0.sessionId == sessionId }.sorted { lhs, rhs in
+            let l = (rank[lhs.id] == nil ? 1 : 0, rank[lhs.id] ?? 0, lhs.sortOrder, lhs.id.uuidString)
+            let r = (rank[rhs.id] == nil ? 1 : 0, rank[rhs.id] ?? 0, rhs.sortOrder, rhs.id.uuidString)
+            return l < r
         }
-        for set in sorted {
-            if bucket[set.exerciseId] == nil { order.append(set.exerciseId) }
-            bucket[set.exerciseId, default: []].append(set)
+        let newOrder = Dictionary(uniqueKeysWithValues: sameSession.enumerated().map { ($1.id, $0 + 1) })
+        return entries.map { entry in newOrder[entry.id].map { entry.with(sortOrder: $0) } ?? entry }
+    }
+
+    /// セッション内のセットを entry (カード) ごとにまとめる。並びは entry の sort_order 順 (セッションをまたぐ場合は
+    /// セッションの最初の記録時刻順)、セットは set_index 順。セットの無い entry も返す (呼び出し側で除く)。
+    /// entry が分からないセットは出さない
+    static func groupByEntry(sets: [WorkoutSet], entries: [WorkoutEntry]) -> [(entry: WorkoutEntry, sets: [WorkoutSet])] {
+        let bySet = Dictionary(grouping: sets, by: \.entryId)
+        var sessionStart: [UUID: Date] = [:]
+        for set in sets {
+            let at = set.completedAt ?? .distantFuture
+            sessionStart[set.sessionId] = min(sessionStart[set.sessionId] ?? .distantFuture, at)
         }
-        return order.map { id in (id, bucket[id]!.sorted { $0.setIndex < $1.setIndex }) }
+        return entries
+            .sorted { lhs, rhs in
+                let l = (sessionStart[lhs.sessionId] ?? .distantFuture, lhs.sessionId.uuidString, lhs.sortOrder)
+                let r = (sessionStart[rhs.sessionId] ?? .distantFuture, rhs.sessionId.uuidString, rhs.sortOrder)
+                return l < r
+            }
+            .map { ($0, (bySet[$0.id] ?? []).sorted { $0.setIndex < $1.setIndex }) }
+    }
+
+    /// 同じ種目の 1 日分のセットを entry ごとのかたまりに分ける (前回の対応・履歴の「｜」区切り)。
+    /// entry が分かればその sort_order 順、分からなければ最初の completed_at 順 (近似)。セットは set_index 順
+    static func blocks(of sets: [WorkoutSet], entriesById: [UUID: WorkoutEntry]) -> [[WorkoutSet]] {
+        let grouped = Dictionary(grouping: sets, by: \.entryId)
+        func firstAt(_ id: UUID) -> Date { grouped[id]?.compactMap(\.completedAt).min() ?? .distantFuture }
+        var sessionStart: [UUID: Date] = [:]
+        for set in sets {
+            sessionStart[set.sessionId] = min(sessionStart[set.sessionId] ?? .distantFuture, set.completedAt ?? .distantFuture)
+        }
+        let keys = grouped.keys.sorted { lhs, rhs in
+            let ls = grouped[lhs]![0].sessionId, rs = grouped[rhs]![0].sessionId
+            let l = (sessionStart[ls] ?? .distantFuture, ls.uuidString, entriesById[lhs]?.sortOrder ?? .max, firstAt(lhs), lhs.uuidString)
+            let r = (sessionStart[rs] ?? .distantFuture, rs.uuidString, entriesById[rhs]?.sortOrder ?? .max, firstAt(rhs), rhs.uuidString)
+            return l < r
+        }
+        return keys.map { key in grouped[key]!.sorted { ($0.setIndex, $0.completedAt ?? .distantFuture) < ($1.setIndex, $1.completedAt ?? .distantFuture) } }
     }
 
     /// 種目を今日の画面に出したときに並べる未保存の行 (Gymwork 型: 前回の日のセットを行ごとに写す)。

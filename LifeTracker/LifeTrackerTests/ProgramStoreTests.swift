@@ -24,7 +24,7 @@ struct ProgramStoreTests {
         #expect(source.routineExercises.allSatisfy { $0.targetSets == nil && $0.targetReps == nil && $0.targetWeight == nil })
     }
 
-    @Test("編集: 名前と種目の並びを丸ごと置き換える。重複した種目は 1 つにまとめる")
+    @Test("編集: 名前と種目の並びを丸ごと置き換える。同じ種目を 2 行持てる (最初と最後に同じ種目)")
     func edit() async throws {
         let source = MockWorkoutDataSource(exercises: [bench, incline, pushdown])
         let store = ProgramStore(dataSource: source)
@@ -33,7 +33,8 @@ struct ProgramStoreTests {
         #expect(await store.save(id: id, name: "胸と三頭", exerciseIds: [pushdown.id, bench.id, pushdown.id]) == nil)
         #expect(store.programs.count == 1)
         #expect(store.programs[0].name == "胸と三頭")
-        #expect(store.programs[0].exerciseIds == [pushdown.id, bench.id])
+        #expect(store.programs[0].exerciseIds == [pushdown.id, bench.id, pushdown.id])
+        #expect(source.routineExercises.map(\.sortOrder).sorted() == [1, 2, 3])
     }
 
     @Test("名前が空・種目が 0 なら保存しない")
@@ -107,14 +108,14 @@ struct ProgramStoreTests {
         _ = await programs.save(id: nil, name: "胸の日", exerciseIds: [bench.id, incline.id])
         let today = WorkoutSessionStore(dataSource: source, calendar: .current)
         await today.load()
-        await today.addPlannedExercise(bench.id)
-        today.updateDraft(exerciseId: bench.id, draftId: try #require(today.drafts[bench.id]?.first?.id),
+        let benchCard = await today.addPlannedExercise(bench.id)
+        today.updateDraft(cardId: benchCard.id, draftId: try #require(today.drafts[benchCard.id]?.first?.id),
                           input: WorkoutSetInput(weight: 50, reps: 5))
         await programs.load()
         for exerciseId in try #require(programs.programs.first).exerciseIds where !today.todayExerciseIds.contains(exerciseId) {
             await today.addPlannedExercise(exerciseId)
         }
         #expect(today.todayExerciseIds == [bench.id, incline.id])
-        #expect(today.drafts[bench.id]?.first?.input.weight == 50)
+        #expect(today.drafts[benchCard.id]?.first?.input.weight == 50)
     }
 }

@@ -1,14 +1,19 @@
 import Foundation
 
 /// テスト / プレビュー用のインメモリ実装。DB の制約のうち画面の挙動に効くもの
-/// (進行中セッション同時 1 件・set_index の UNIQUE・CASCADE) を再現する
+/// (進行中セッション同時 1 件・UNIQUE (entry_id, set_index)・UNIQUE (session_id, sort_order)・
+/// entry と set の exercise_id 一致 (複合 FK)・CASCADE・空 entry の削除) を再現する
 final class MockWorkoutDataSource: WorkoutDataSource {
     enum MockError: Error, Equatable {
         case sessionAlreadyInProgress
         case duplicateSetIndex
         case notFound
-        /// routine_exercise の PK (routine_id, exercise_id)
-        case duplicateRoutineExercise
+        /// workout_entry の UNIQUE (session_id, sort_order)
+        case duplicateEntrySortOrder
+        /// workout_set の複合 FK (entry_id, exercise_id) → workout_entry (id, exercise_id)
+        case entryMismatch
+        /// 複合 FK (NO ACTION): セットが残っている entry は消せない
+        case entryHasSets
     }
 
     private(set) var exercises: [Exercise]
@@ -16,6 +21,7 @@ final class MockWorkoutDataSource: WorkoutDataSource {
     private(set) var routineExercises: [RoutineExercise]
     private(set) var sessions: [WorkoutSession]
     private(set) var sets: [WorkoutSet]
+    private(set) var entries: [WorkoutEntry]
     private(set) var weeklyGoals: [WeeklyGoal] = []
 
     /// テスト用の失敗注入: addSet の応答を遅らせる (二度押しの再現)
@@ -25,18 +31,34 @@ final class MockWorkoutDataSource: WorkoutDataSource {
     /// テスト用の失敗注入: 次の addSet は INSERT した後に応答だけ失う (回線断の再現)
     var dropNextAddSetResponse = false
 
+    /// テスト用: reorderEntries の呼び出し記録 (書き込みの有無と順番の確認)
+    private(set) var reorderCalls: [[UUID]] = []
+
+    /// entries に無い entryId のセットには、migration 0010 の backfill と同じ規則で entry を作る
+    /// (同じ entryId = 1 行・セッションごとに最初の completed_at 順で sort_order)。テストの組み立てを短くするため
     init(
         exercises: [Exercise] = [],
         routines: [Routine] = [],
         routineExercises: [RoutineExercise] = [],
         sessions: [WorkoutSession] = [],
-        sets: [WorkoutSet] = []
+        sets: [WorkoutSet] = [],
+        entries: [WorkoutEntry] = []
     ) {
         self.exercises = exercises
         self.routines = routines
         self.routineExercises = routineExercises
         self.sessions = sessions
         self.sets = sets
+        var all = entries
+        let known = Set(entries.map(\.id))
+        let orphans = Dictionary(grouping: sets.filter { !known.contains($0.entryId) }, by: \.entryId)
+        let firstAt = { (id: UUID) in orphans[id]!.compactMap(\.completedAt).min() ?? .distantFuture }
+        for id in orphans.keys.sorted(by: { (firstAt($0), $0.uuidString) < (firstAt($1), $1.uuidString) }) {
+            let sample = orphans[id]![0]
+            let next = (all.filter { $0.sessionId == sample.sessionId }.map(\.sortOrder).max() ?? 0) + 1
+            all.append(WorkoutEntry(id: id, sessionId: sample.sessionId, exerciseId: sample.exerciseId, sortOrder: next))
+        }
+        self.entries = all
     }
 
     func fetchExercises() async throws -> [Exercise] {
@@ -63,7 +85,6 @@ final class MockWorkoutDataSource: WorkoutDataSource {
     var failNextRoutineExerciseInsert = false
 
     func saveRoutine(id: UUID?, name: String, exerciseIds: [UUID]) async throws -> Routine {
-        guard Set(exerciseIds).count == exerciseIds.count else { throw MockError.duplicateRoutineExercise }
         let routine: Routine
         if let id {
             guard let index = routines.firstIndex(where: { $0.id == id }) else { throw MockError.notFound }
@@ -118,6 +139,7 @@ final class MockWorkoutDataSource: WorkoutDataSource {
     func deleteSession(id: UUID) async throws {
         sessions.removeAll { $0.id == id }
         sets.removeAll { $0.sessionId == id }
+        entries.removeAll { $0.sessionId == id }
     }
 
     func fetchSets(sessionId: UUID) async throws -> [WorkoutSet] {
@@ -125,11 +147,14 @@ final class MockWorkoutDataSource: WorkoutDataSource {
     }
 
     func addSet(_ new: NewWorkoutSet) async throws -> WorkoutSet {
-        guard !sets.contains(where: {
-            $0.sessionId == new.sessionId && $0.exerciseId == new.exerciseId && $0.setIndex == new.setIndex
-        }) else { throw MockError.duplicateSetIndex }
+        guard entries.contains(where: { $0.id == new.entryId && $0.exerciseId == new.exerciseId }) else {
+            throw MockError.entryMismatch
+        }
+        guard !sets.contains(where: { $0.entryId == new.entryId && $0.setIndex == new.setIndex }) else {
+            throw MockError.duplicateSetIndex
+        }
         let set = WorkoutSet(
-            id: UUID(), sessionId: new.sessionId, exerciseId: new.exerciseId, setIndex: new.setIndex,
+            id: UUID(), sessionId: new.sessionId, exerciseId: new.exerciseId, entryId: new.entryId, setIndex: new.setIndex,
             weight: new.weight, reps: new.reps, durationSec: new.durationSec, distanceM: new.distanceM,
             rpe: nil, isWarmup: new.isWarmup, completedAt: new.completedAt
         )
@@ -148,10 +173,49 @@ final class MockWorkoutDataSource: WorkoutDataSource {
         return sets[index]
     }
 
-    /// RPC workout_set_delete と同じく、残りの set_index を 1..n に詰め直す
+    /// RPC workout_set_delete と同じく、同じ entry の残りの set_index を 1..n に詰め直し、空になった entry を消す
     func deleteSet(id: UUID) async throws {
         guard let target = sets.first(where: { $0.id == id }) else { return }
         sets = WorkoutLogic.removingAndRenumbering(target, from: sets)
+        entries = WorkoutLogic.pruningEntry(target.entryId, remainingSets: sets, entries: entries)
+    }
+
+    func fetchEntries(sessionId: UUID) async throws -> [WorkoutEntry] {
+        entries.filter { $0.sessionId == sessionId }.sorted { $0.sortOrder < $1.sortOrder }
+    }
+
+    func fetchEntries(sessionIds: [UUID]) async throws -> [WorkoutEntry] {
+        let ids = Set(sessionIds)
+        return entries.filter { ids.contains($0.sessionId) }
+            .sorted { ($0.sessionId.uuidString, $0.sortOrder) < ($1.sessionId.uuidString, $1.sortOrder) }
+    }
+
+    func addEntry(sessionId: UUID, exerciseId: UUID, sortOrder: Int) async throws -> WorkoutEntry {
+        guard sessions.contains(where: { $0.id == sessionId }) else { throw MockError.notFound }
+        guard !entries.contains(where: { $0.sessionId == sessionId && $0.sortOrder == sortOrder }) else {
+            throw MockError.duplicateEntrySortOrder
+        }
+        let entry = WorkoutEntry(id: UUID(), sessionId: sessionId, exerciseId: exerciseId, sortOrder: sortOrder)
+        entries.append(entry)
+        return entry
+    }
+
+    func deleteEntry(id: UUID) async throws {
+        guard !sets.contains(where: { $0.entryId == id }) else { throw MockError.entryHasSets }
+        entries.removeAll { $0.id == id }
+    }
+
+    func reorderEntries(sessionId: UUID, entryIds: [UUID]) async throws {
+        reorderCalls.append(entryIds)
+        entries = WorkoutLogic.reordering(entries, sessionId: sessionId, entryIds: entryIds)
+    }
+
+    /// テスト用: 別端末が同じセッションに entry を作った状態を再現する
+    func insertEntryFromAnotherDevice(sessionId: UUID, exerciseId: UUID) -> WorkoutEntry {
+        let entry = WorkoutEntry(id: UUID(), sessionId: sessionId, exerciseId: exerciseId,
+                                 sortOrder: (entries.filter { $0.sessionId == sessionId }.map(\.sortOrder).max() ?? 0) + 1)
+        entries.append(entry)
+        return entry
     }
 
     func fetchExerciseSets(exerciseId: UUID) async throws -> [WorkoutSet] {

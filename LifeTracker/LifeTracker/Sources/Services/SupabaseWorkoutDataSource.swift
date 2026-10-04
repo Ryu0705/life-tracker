@@ -152,9 +152,58 @@ final class SupabaseWorkoutDataSource: WorkoutDataSource {
             .value
     }
 
-    /// 削除と詰め直しは 1 トランザクションで行う必要があるため RPC (0008)
+    /// 削除と詰め直し (空になった entry の削除を含む) は 1 トランザクションで行う必要があるため RPC (0008 → 0010)
     func deleteSet(id: UUID) async throws {
         try await client.rpc("workout_set_delete", params: ["p_id": id.uuidString]).execute()
+    }
+
+    func fetchEntries(sessionId: UUID) async throws -> [WorkoutEntry] {
+        try await client.from("workout_entry")
+            .select()
+            .eq("session_id", value: sessionId.uuidString)
+            .order("sort_order")
+            .execute()
+            .value
+    }
+
+    /// URL の長さを抑えるため 50 セッションずつ取る
+    func fetchEntries(sessionIds: [UUID]) async throws -> [WorkoutEntry] {
+        let unique = Array(Set(sessionIds)).sorted { $0.uuidString < $1.uuidString }
+        var result: [WorkoutEntry] = []
+        for start in stride(from: 0, to: unique.count, by: 50) {
+            let chunk = unique[start..<min(start + 50, unique.count)].map(\.uuidString)
+            let rows: [WorkoutEntry] = try await fetchAllPages {
+                client.from("workout_entry")
+                    .select()
+                    .in("session_id", values: chunk)
+                    .order("session_id")
+                    .order("sort_order")
+                    .order("id")
+            }
+            result += rows
+        }
+        return result
+    }
+
+    func addEntry(sessionId: UUID, exerciseId: UUID, sortOrder: Int) async throws -> WorkoutEntry {
+        try await client.from("workout_entry")
+            .insert(NewWorkoutEntry(sessionId: sessionId, exerciseId: exerciseId, sortOrder: sortOrder))
+            .select()
+            .single()
+            .execute()
+            .value
+    }
+
+    func deleteEntry(id: UUID) async throws {
+        try await client.from("workout_entry")
+            .delete()
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
+
+    /// 並べ替えは sort_order の入れ替えを 1 トランザクションで行う必要があるため RPC (0010)
+    func reorderEntries(sessionId: UUID, entryIds: [UUID]) async throws {
+        try await client.rpc("workout_entry_reorder", params: ReorderParams(session: sessionId, entryIds: entryIds)).execute()
     }
 
     func fetchExerciseSets(exerciseId: UUID) async throws -> [WorkoutSet] {
@@ -250,6 +299,22 @@ private struct ExerciseIdRow: Decodable {
 private struct NewWorkoutSession: Encodable {
     let routineId: UUID?
     let startedAt: Date
+}
+
+private struct NewWorkoutEntry: Encodable {
+    let sessionId: UUID
+    let exerciseId: UUID
+    let sortOrder: Int
+}
+
+private struct ReorderParams: Encodable {
+    let session: UUID
+    let entryIds: [UUID]
+
+    enum CodingKeys: String, CodingKey {
+        case session = "p_session"
+        case entryIds = "p_entry_ids"
+    }
 }
 
 private struct NewRoutine: Encodable {

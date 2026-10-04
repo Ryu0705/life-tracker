@@ -55,7 +55,8 @@ final class ProgramStore: ObservableObject {
         }
     }
 
-    /// 保存して一覧を取り直す。失敗は戻り値で返す (編集画面を開いたまま、同じ操作でやり直せる)
+    /// 保存して一覧を取り直す。同じ種目を 2 行以上持てる (routine_exercise の PK は (routine_id, sort_order)・0010)。
+    /// 失敗は戻り値で返す (編集画面を開いたまま、同じ操作でやり直せる)
     func save(id: UUID?, name: String, exerciseIds: [UUID]) async -> Error? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return SaveError.emptyName }
@@ -63,10 +64,8 @@ final class ProgramStore: ObservableObject {
         guard !isSaving else { return nil }
         isSaving = true
         defer { isSaving = false }
-        var unique: [UUID] = []
-        for exerciseId in exerciseIds where !unique.contains(exerciseId) { unique.append(exerciseId) }
         do {
-            _ = try await dataSource.saveRoutine(id: id, name: trimmed, exerciseIds: unique)
+            _ = try await dataSource.saveRoutine(id: id, name: trimmed, exerciseIds: exerciseIds)
             await load()
             return nil
         } catch {

@@ -23,7 +23,7 @@ private func exercise(_ name: String, _ kind: MetricKind = .weightReps, _ muscle
 
 private func set(_ exercise: Exercise, _ index: Int = 1, weight: Double? = nil, reps: Int? = nil, sec: Int? = nil,
                  warmup: Bool = false, at: Date) -> WorkoutSet {
-    WorkoutSet(id: UUID(), sessionId: UUID(), exerciseId: exercise.id, setIndex: index, weight: weight, reps: reps,
+    WorkoutSet(id: UUID(), sessionId: UUID(), exerciseId: exercise.id, entryId: UUID(), setIndex: index, weight: weight, reps: reps,
                durationSec: sec, distanceM: nil, rpe: nil, isWarmup: warmup, completedAt: at)
 }
 

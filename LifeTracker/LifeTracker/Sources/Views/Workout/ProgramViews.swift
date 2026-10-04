@@ -3,10 +3,12 @@ import SwiftUI
 /// プログラムの呼び出しに要る周辺情報 (確認シートの種目名・追加済み判定・前回の記録)
 struct ProgramContext {
     let exercisesById: [UUID: Exercise]
-    /// 今日すでに画面にある種目 (確認シートで選べない)
-    let alreadyAdded: Set<UUID>
+    /// 種目 id → 今日の画面のカードの枚数 (確認シートの件数判定: k 行目は今日 k 枚以上あれば追加済み)
+    let todayCounts: [UUID: Int]
     /// 種目ごとの直近の日のセット (WorkoutSummary.latestDaySets)
     let latestSets: [UUID: [WorkoutSet]]
+    /// 前回のかたまりの区切り (「｜」) の順番
+    let entriesById: [UUID: WorkoutEntry]
 }
 
 /// 種目追加シートからプログラムを呼び出すための一式
@@ -50,28 +52,41 @@ struct ProgramChips: View {
 }
 
 /// プログラムの確認: 種目と前回の記録を並べ、外したい種目のチェックを外して読み込む。
-/// 読み込んだ種目の行は、既存の前回値の埋め方 (その種目の直近の日) で埋まる
+/// 読み込んだ種目の行は、既存の前回値の埋め方 (その種目の直近の日) で埋まる。
+/// 同じ種目の行は件数で判定する (例: 今日 A が 1 枚・プログラムが A・B・A → 1 行目の A だけ追加済み = E8)
 struct ProgramLoadSheet: View {
     let program: WorkoutProgram
     let context: ProgramContext
     let onLoad: ([UUID]) -> Void
 
-    @State private var excluded: Set<UUID> = []
+    /// チェックを外した行 (プログラム内の位置)
+    @State private var excluded: Set<Int> = []
 
-    private var exerciseIds: [UUID] {
-        program.exerciseIds.filter { context.exercisesById[$0] != nil }
+    /// 使える種目の行 (位置, 種目, 追加済みか)
+    private var rows: [(offset: Int, exercise: Exercise, isAdded: Bool)] {
+        let added = Self.addedFlags(exerciseIds: program.exerciseIds, todayCounts: context.todayCounts)
+        return program.exerciseIds.enumerated().compactMap { offset, exerciseId in
+            context.exercisesById[exerciseId].map { (offset, $0, added[offset]) }
+        }
+    }
+
+    /// 件数判定: その種目の k 行目は、今日その種目のカードが k 枚以上あれば追加済み
+    static func addedFlags(exerciseIds: [UUID], todayCounts: [UUID: Int]) -> [Bool] {
+        var seen: [UUID: Int] = [:]
+        return exerciseIds.map { exerciseId in
+            seen[exerciseId, default: 0] += 1
+            return (todayCounts[exerciseId] ?? 0) >= seen[exerciseId]!
+        }
     }
 
     private var selectedIds: [UUID] {
-        exerciseIds.filter { !context.alreadyAdded.contains($0) && !excluded.contains($0) }
+        rows.filter { !$0.isAdded && !excluded.contains($0.offset) }.map(\.exercise.id)
     }
 
     var body: some View {
         List {
-            ForEach(exerciseIds, id: \.self) { exerciseId in
-                if let exercise = context.exercisesById[exerciseId] {
-                    row(exercise)
-                }
+            ForEach(rows, id: \.offset) { row in
+                self.row(row.exercise, offset: row.offset, isAdded: row.isAdded)
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -91,14 +106,12 @@ struct ProgramLoadSheet: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private func row(_ exercise: Exercise) -> some View {
-        let isAdded = context.alreadyAdded.contains(exercise.id)
-        let isOn = !isAdded && !excluded.contains(exercise.id)
-        let summary = (context.latestSets[exercise.id] ?? [])
-            .map { ($0.isWarmup ? "W " : "") + WorkoutLogic.summary(of: $0, kind: exercise.metricKind) }
-            .joined(separator: " / ")
+    private func row(_ exercise: Exercise, offset: Int, isAdded: Bool) -> some View {
+        let isOn = !isAdded && !excluded.contains(offset)
+        let summary = WorkoutSummary.blocksText(context.latestSets[exercise.id] ?? [], kind: exercise.metricKind,
+                                                entriesById: context.entriesById, markWarmup: true)
         return Button {
-            if excluded.contains(exercise.id) { excluded.remove(exercise.id) } else { excluded.insert(exercise.id) }
+            if excluded.contains(offset) { excluded.remove(offset) } else { excluded.insert(offset) }
         } label: {
             HStack(alignment: .firstTextBaseline) {
                 Image(systemName: isOn ? "checkmark.square.fill" : "square")
@@ -253,7 +266,8 @@ struct ProgramEditView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
-    @State private var exerciseIds: [UUID]
+    /// 行ごとの id を持つ (同じ種目を 2 行入れても ForEach の id が重ならない)
+    @State private var rows: [ProgramRow]
     @State private var isPicking = false
     @State private var isConfirmingDiscard = false
     /// 通信の失敗だけを出す (入力の不足は保存ボタンを押せなくして示す)。入力が変わったら消す
@@ -265,8 +279,15 @@ struct ProgramEditView: View {
         self.exercises = exercises
         self.draft = draft
         _name = State(initialValue: draft.name)
-        _exerciseIds = State(initialValue: draft.exerciseIds)
+        _rows = State(initialValue: draft.exerciseIds.map { ProgramRow(id: UUID(), exerciseId: $0) })
     }
+
+    struct ProgramRow: Identifiable, Hashable {
+        let id: UUID
+        let exerciseId: UUID
+    }
+
+    private var exerciseIds: [UUID] { rows.map(\.exerciseId) }
 
     private var exercisesById: [UUID: Exercise] {
         Dictionary(uniqueKeysWithValues: exercises.map { ($0.id, $0) })
@@ -289,17 +310,17 @@ struct ProgramEditView: View {
                         .focused($nameFocused)
                 }
                 Section {
-                    ForEach(exerciseIds, id: \.self) { exerciseId in
+                    ForEach(rows) { row in
                         HStack {
-                            Text(exercisesById[exerciseId]?.name ?? "（使われていない種目）")
+                            Text(exercisesById[row.exerciseId]?.name ?? "（使われていない種目）")
                             Spacer()
-                            Text(exercisesById[exerciseId]?.muscleGroup.displayName ?? "")
+                            Text(exercisesById[row.exerciseId]?.muscleGroup.displayName ?? "")
                                 .font(.caption)
                                 .foregroundStyle(Color.secondary)
                         }
                     }
-                    .onMove { exerciseIds.move(fromOffsets: $0, toOffset: $1) }
-                    .onDelete { exerciseIds.remove(atOffsets: $0) }
+                    .onMove { rows.move(fromOffsets: $0, toOffset: $1) }
+                    .onDelete { rows.remove(atOffsets: $0) }
                     Button {
                         isPicking = true
                     } label: {
@@ -320,7 +341,7 @@ struct ProgramEditView: View {
             .navigationBarTitleDisplayMode(.inline)
             .interactiveDismissDisabled(hasChanges)
             .onChange(of: name) { message = nil }
-            .onChange(of: exerciseIds) { message = nil }
+            .onChange(of: rows) { message = nil }
             .onAppear {
                 if draft.name.isEmpty { nameFocused = true }
             }
@@ -348,11 +369,62 @@ struct ProgramEditView: View {
                 }
             }
             .sheet(isPresented: $isPicking) {
-                ExercisePickerView(exercises: exercises.filter { !exerciseIds.contains($0.id) }, mode: .add(nil)) { picked in
+                // 入っている種目も選べる (同じ種目を 2 行。例: 最初と最後にベンチ)。入っている数は「追加済み（n）」で示す
+                ExercisePickerView(exercises: exercises, todayCounts: WorkoutView.counts(exerciseIds), mode: .add(nil)) { picked in
                     isPicking = false
-                    exerciseIds += picked.map(\.id)
+                    rows += picked.map { ProgramRow(id: UUID(), exerciseId: $0.id) }
                 }
             }
+        }
+    }
+}
+
+/// 記録画面の左上「プログラム」: 作成・一覧 (管理) と、今日の種目の保存・上書き。
+/// 同じ並びのプログラムがあれば保存は押せず、上書き先も同じ並びのものは押せない。今日が空なら両方押せない (D-1)。
+/// 今日の種目は画面順・同じ種目は枚数ぶん (記録画面で並べ替えてから上書きすると、実施した順がプログラムに残る)
+struct TodayProgramMenu: View {
+    @ObservedObject var programStore: ProgramStore
+    let todayIds: [UUID]
+    let onNew: () -> Void
+    let onList: () -> Void
+    let onSaveToday: ([UUID]) -> Void
+    let onOverwrite: (WorkoutProgram, [UUID]) -> Void
+
+    var body: some View {
+        let same = programStore.program(withSameOrderAs: todayIds)
+        Menu {
+            Button("新しいプログラムを作成", systemImage: "plus", action: onNew)
+            Button("プログラム一覧", systemImage: "list.bullet", action: onList)
+            Section("今日の種目（\(Set(todayIds).count)種目）") {
+                Button {
+                    onSaveToday(todayIds)
+                } label: {
+                    Label("今日の種目を新しいプログラムに保存", systemImage: "square.and.arrow.down")
+                    if let same { Text("「\(same.name)」と同じ内容です") }
+                }
+                .disabled(todayIds.isEmpty || same != nil)
+                // メニューの入れ子には .disabled が効かないため、押せないときは押せないボタンとして出す
+                if todayIds.isEmpty || programStore.programs.isEmpty {
+                    Button("今日の種目で上書き", systemImage: "arrow.triangle.2.circlepath") {}
+                        .disabled(true)
+                } else {
+                    Menu {
+                        ForEach(programStore.programs) { program in
+                            Button {
+                                onOverwrite(program, todayIds)
+                            } label: {
+                                Text(program.name)
+                                if program.exerciseIds == todayIds { Text("今日と同じ内容です") }
+                            }
+                            .disabled(program.exerciseIds == todayIds)
+                        }
+                    } label: {
+                        Label("今日の種目で上書き", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                }
+            }
+        } label: {
+            Text("プログラム")
         }
     }
 }

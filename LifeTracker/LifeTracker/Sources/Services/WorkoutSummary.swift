@@ -128,6 +128,14 @@ enum WorkoutSummary {
         return result
     }
 
+    /// 1 日分の同じ種目のセットの表記: カード (entry) ごとに「 / 」で、カードの間は「 ｜ 」で区切る
+    /// (例「60×10 / 65×8 ｜ 50×12 / 50×10」)。ウォームアップには「W 」を付けるかを選べる
+    static func blocksText(_ sets: [WorkoutSet], kind: MetricKind, entriesById: [UUID: WorkoutEntry], markWarmup: Bool) -> String {
+        WorkoutLogic.blocks(of: sets, entriesById: entriesById)
+            .map { block in block.map { (markWarmup && $0.isWarmup ? "W " : "") + WorkoutLogic.summary(of: $0, kind: kind) }.joined(separator: " / ") }
+            .joined(separator: " ｜ ")
+    }
+
     /// カード見出しのサブ行。weight_reps は「今日 1,105kg · e1RM 69kg（前回 67.5kg）」、今日の本番が無ければ「前回 e1RM 67.5kg」
     static func cardHeadline(kind: MetricKind, todaySets: [WorkoutSet], previousSets: [WorkoutSet]) -> String? {
         let metric = headlineMetric(kind: kind, sets: todaySets + previousSets)

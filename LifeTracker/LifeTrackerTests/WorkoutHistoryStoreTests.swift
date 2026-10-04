@@ -18,8 +18,13 @@ private func exercise(_ name: String, _ muscle: Exercise.MuscleGroup = .chest) -
     Exercise(id: UUID(), name: name, muscleGroup: muscle, equipment: nil, metricKind: .weightReps, note: nil, isArchived: false, sortOrder: nil)
 }
 
-private func set(_ exercise: Exercise, _ index: Int = 1, weight: Double = 60, reps: Int = 10, at: Date?) -> WorkoutSet {
-    WorkoutSet(id: UUID(), sessionId: UUID(), exerciseId: exercise.id, setIndex: index, weight: weight, reps: reps,
+/// 既定は 1 つのセッション (日ごとの絞り込みはセットの completed_at で行うため)。entry は (セッション, 種目) ごと
+private let sharedSession = UUID()
+
+private func set(_ exercise: Exercise, _ index: Int = 1, weight: Double = 60, reps: Int = 10, at: Date?,
+                 session: UUID = sharedSession, entry: UUID? = nil) -> WorkoutSet {
+    WorkoutSet(id: UUID(), sessionId: session, exerciseId: exercise.id, entryId: entry ?? backfillEntryId(session, exercise.id),
+               setIndex: index, weight: weight, reps: reps,
                durationSec: nil, distanceM: nil, rpe: nil, isWarmup: false, completedAt: at)
 }
 
@@ -110,32 +115,35 @@ struct WorkoutSessionStoreReplaceTests {
     func replaceKeepsPosition() async {
         let (_, store) = makeStore()
         await store.load()
-        await store.addPlannedExercise(bench.id)
+        let benchCard = await store.addPlannedExercise(bench.id)
         await store.addPlannedExercise(squat.id)
-        await store.replacePlannedExercise(bench.id, with: incline.id)
+        await store.replacePlannedCard(benchCard, with: incline.id)
         #expect(store.todayExerciseIds == [incline.id, squat.id])
-        #expect(store.drafts[bench.id] == nil)
-        #expect(store.drafts[incline.id]?.map(\.input.weight) == [20, 22])
+        #expect(store.drafts[benchCard.id] == nil)
+        #expect(store.drafts[store.cards[0].id]?.map(\.input.weight) == [20, 22])
     }
 
     @Test("記録済みのカードは入れ替えない")
     func recordedCardRejected() async {
         let (_, store) = makeStore()
         await store.load()
-        await store.addPlannedExercise(bench.id)
-        _ = await store.addSet(exercise: bench, input: WorkoutSetInput(weight: 60, reps: 10))
-        await store.replacePlannedExercise(bench.id, with: incline.id)
+        let benchCard = await store.addPlannedExercise(bench.id)
+        _ = await store.addSet(card: benchCard, exercise: bench, input: WorkoutSetInput(weight: 60, reps: 10))
+        await store.replacePlannedCard(benchCard, with: incline.id)
         #expect(store.todayExerciseIds == [bench.id])
     }
 
-    @Test("すでに今日にある種目への入れ替えは何もしない")
-    func duplicateRejected() async {
+    @Test("すでに今日にある種目への入れ替えは 2 枚目になる (E11)。自分と同じ種目への入れ替えは何もしない")
+    func replaceIntoExistingBecomesSecondCard() async {
         let (_, store) = makeStore()
         await store.load()
-        await store.addPlannedExercise(bench.id)
-        await store.addPlannedExercise(squat.id)
-        await store.replacePlannedExercise(bench.id, with: squat.id)
-        #expect(store.todayExerciseIds == [bench.id, squat.id])
-        #expect(store.drafts[bench.id] != nil)
+        let benchCard = await store.addPlannedExercise(bench.id)
+        let squatCard = await store.addPlannedExercise(squat.id)
+        await store.replacePlannedCard(benchCard, with: squat.id)
+        #expect(store.todayExerciseIds == [squat.id, squat.id])
+        #expect(store.drafts[benchCard.id] == nil)
+        #expect(store.drafts[store.cards[0].id] != nil)
+        await store.replacePlannedCard(squatCard, with: squat.id)
+        #expect(store.cards[1].id == squatCard.id)
     }
 }

@@ -17,7 +17,7 @@ struct WorkoutView: View {
     @State private var selectedDay: Date?
     /// 今日が空の日の「プログラムから選択」(一覧 → 確認シート)
     @State private var isChoosingProgram = false
-    /// 記録・削除の失敗 (種目 id → 文言)。カードの下に出す
+    /// 記録・削除の失敗 (カード id → 文言)。カードの下に出す
     @State private var messages: [UUID: String] = [:]
     @State private var recordedCount = 0
     @State private var restEndsAt: Date?
@@ -34,13 +34,15 @@ struct WorkoutView: View {
     @State private var toast: String?
     /// 「プログラム」メニューから開く、今日の種目での保存 / 上書きの編集画面
     @State private var programDraft: ProgramDraft?
+    /// 各カードの ⋮ →「種目を並べ替え」
+    @State private var isReordering = false
 
     /// 休憩の既定秒数 (Gymwork の推奨 3:00 に合わせる)
     static let restSeconds: TimeInterval = 180
 
     enum EditorTarget: Identifiable, Hashable {
-        case draft(exerciseId: UUID, draftId: UUID)
-        case completed(exerciseId: UUID, setId: UUID)
+        case draft(cardId: UUID, draftId: UUID)
+        case completed(cardId: UUID, setId: UUID)
 
         var id: UUID {
             switch self {
@@ -52,11 +54,11 @@ struct WorkoutView: View {
 
     enum PickerRequest: Identifiable {
         case add
-        case replace(Exercise)
+        case replace(TodayCard, Exercise)
         var id: String {
             switch self {
             case .add: return "add"
-            case .replace(let exercise): return exercise.id.uuidString
+            case .replace(let card, _): return card.id.uuidString
             }
         }
     }
@@ -123,6 +125,9 @@ struct WorkoutView: View {
                 }
                 .sheet(item: $programDraft) { draft in
                     ProgramEditView(programStore: programStore, exercises: store.exercises, draft: draft)
+                }
+                .sheet(isPresented: $isReordering) {
+                    ReorderSheet(store: store)
                 }
                 .sheet(item: $editing) { target in
                     editorSheet(target)
@@ -191,7 +196,8 @@ struct WorkoutView: View {
             if store.isLoading && store.exercises.isEmpty {
                 ProgressView("読み込み中…")
             } else if let selectedDay {
-                PastDayView(sets: historyStore.sets(on: selectedDay), exercisesById: store.exercisesById,
+                PastDayView(sets: historyStore.sets(on: selectedDay), entries: historyStore.entries(on: selectedDay),
+                            exercisesById: store.exercisesById,
                             isLoaded: historyStore.isLoaded(weekStart: displayedWeekStart),
                             onOpenExercise: { path.append($0) })
             } else {
@@ -239,9 +245,9 @@ struct WorkoutView: View {
 
     private var todayList: some View {
         List {
-            ForEach(store.todayExerciseIds, id: \.self) { exerciseId in
-                if let exercise = store.exercisesById[exerciseId] {
-                    exerciseCard(exercise)
+            ForEach(store.cards) { card in
+                if let exercise = store.exercisesById[card.exerciseId] {
+                    exerciseCard(card, exercise)
                 }
             }
 
@@ -293,165 +299,58 @@ struct WorkoutView: View {
         }
     }
 
-    private func exerciseCard(_ exercise: Exercise) -> some View {
-        let completed = store.sets(for: exercise.id)
-        let drafts = store.drafts[exercise.id] ?? []
-        let columns = SetColumn.columns(for: exercise)
-        let numbers = Self.setNumbers(warmups: completed.map(\.isWarmup) + drafts.map(\.input.isWarmup))
-
-        return Section {
-            SetHeaderRow(columns: columns)
-            ForEach(Array(completed.enumerated()), id: \.element.id) { position, set in
-                CompletedSetRow(
-                    label: numbers[position],
-                    previous: previousSummary(exercise, position: position),
-                    set: set,
-                    columns: columns,
-                    isSelected: editing == .completed(exerciseId: exercise.id, setId: set.id),
-                    isWriting: store.isWriting,
-                    onEdit: { editing = .completed(exerciseId: exercise.id, setId: set.id) },
-                    onUndo: { Task { await undo(exercise, set: set) } }
-                )
-                .swipeActions(allowsFullSwipe: false) {
-                    Button("削除", role: .destructive) {
-                        Task {
-                            if let error = await store.deleteSet(set) {
-                                messages[exercise.id] = "削除できませんでした: \(error.localizedDescription)"
-                            } else if editing == .completed(exerciseId: exercise.id, setId: set.id) {
-                                editing = nil
-                            }
-                        }
+    private func exerciseCard(_ card: TodayCard, _ exercise: Exercise) -> some View {
+        TodayExerciseCard(
+            store: store, card: card, exercise: exercise, editing: editing, selectedDraftId: selectedDraftId,
+            message: messages[card.id],
+            onEdit: { editing = $0 },
+            onUndo: { set in Task { await undo(card, set: set) } },
+            onDelete: { set in
+                Task {
+                    if let error = await store.deleteSet(set) {
+                        messages[card.id] = "削除できませんでした: \(error.localizedDescription)"
+                    } else if editing == .completed(cardId: card.id, setId: set.id) {
+                        editing = nil
                     }
                 }
-            }
-            ForEach(Array(drafts.enumerated()), id: \.element.id) { offset, draft in
-                let position = completed.count + offset
-                DraftSetRow(
-                    label: numbers[position],
-                    previous: previousSummary(exercise, position: position),
-                    input: draft.input,
-                    columns: columns,
-                    isSelected: selectedDraftId == draft.id || editing == .draft(exerciseId: exercise.id, draftId: draft.id),
-                    isWriting: store.isWriting,
-                    onEdit: { editing = .draft(exerciseId: exercise.id, draftId: draft.id) },
-                    onComplete: { Task { await complete(exercise, draftId: draft.id) } }
-                )
-                .swipeActions(allowsFullSwipe: false) {
-                    Button("削除", role: .destructive) {
-                        store.removeDraft(exerciseId: exercise.id, draftId: draft.id)
-                    }
-                }
-            }
-            Button {
-                store.addDraft(exerciseId: exercise.id)
-            } label: {
-                Label("セットを追加", systemImage: "plus")
-                    .font(.callout)
-                    .frame(maxWidth: .infinity, minHeight: 36)
-            }
-        } header: {
-            HStack {
-                Button {
-                    path.append(exercise.id)
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 4) {
-                            Text(exercise.name)
-                                .font(.headline)
-                            Image(systemName: "chart.line.uptrend.xyaxis")
-                                .font(.caption)
-                        }
-                        if let headline = WorkoutSummary.cardHeadline(kind: exercise.metricKind, todaySets: completed,
-                                                                      previousSets: store.previousDay(for: exercise.id)?.sets ?? []) {
-                            Text(headline)
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(Color.secondary)
-                        }
-                    }
-                }
-                Spacer()
-                // 記録済みのカードではできることが無いので ⋮ 自体を出さない
-                if completed.isEmpty {
-                    Menu {
-                        Button("種目を入れ替え", systemImage: "arrow.left.arrow.right") { picker = .replace(exercise) }
-                        Button("今日から外す", systemImage: "minus.circle", role: .destructive) { store.removePlannedExercise(exercise.id) }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .accessibilityLabel("\(exercise.name)のメニュー")
-                }
-            }
-            .textCase(nil)
-        } footer: {
-            if let message = messages[exercise.id] {
-                Text(message)
-                    .foregroundStyle(.red)
-            }
-        }
+            },
+            onComplete: { draftId in Task { await complete(card, exercise, draftId: draftId) } },
+            onOpenExercise: { path.append(exercise.id) },
+            onReplace: { picker = .replace(card, exercise) },
+            onReorder: { isReordering = true }
+        )
     }
 
     @ViewBuilder
     private func pickerSheet(_ request: PickerRequest) -> some View {
-        let candidates = store.exercises.filter { !store.todayExerciseIds.contains($0.id) }
+        // 今日にある種目も選べる (2 枚目になる)。入れ替えは自分自身だけ候補から外す (E11)
+        let counts = Self.counts(store.todayExerciseIds)
         switch request {
         case .add:
-            ExercisePickerView(exercises: candidates, mode: .add(ProgramLoad(programs: programStore.programs, context: programContext) { ids in
+            ExercisePickerView(exercises: store.exercises, todayCounts: counts,
+                               mode: .add(ProgramLoad(programs: programStore.programs, context: programContext) { ids in
                 picker = nil
                 loadPlanned(ids)
             })) { picked in
                 picker = nil
                 loadPlanned(picked.map(\.id))
             }
-        case .replace(let current):
-            ExercisePickerView(exercises: candidates, mode: .replace(current: current)) { picked in
+        case .replace(let card, let current):
+            ExercisePickerView(exercises: store.exercises.filter { $0.id != current.id }, todayCounts: counts,
+                               mode: .replace(current: current)) { picked in
                 picker = nil
                 guard let replacement = picked.first else { return }
-                Task { await store.replacePlannedExercise(current.id, with: replacement.id) }
+                Task { await store.replacePlannedCard(card, with: replacement.id) }
             }
         }
     }
 
-    /// 左上「プログラム」: 作成・一覧 (管理) と、今日の種目の保存・上書き。
-    /// 同じ並びのプログラムがあれば保存は押せず、上書き先も同じ並びのものは押せない。今日が空なら両方押せない (D-1)
+    /// 左上「プログラム」(ProgramViews.swift の TodayProgramMenu)
     private var programMenu: some View {
-        let todayIds = store.todayExerciseIds
-        let same = programStore.program(withSameOrderAs: todayIds)
-        return Menu {
-            Button("新しいプログラムを作成", systemImage: "plus") { programDraft = .new() }
-            Button("プログラム一覧", systemImage: "list.bullet") { path.append(ProgramsRoute()) }
-            Section("今日の種目（\(todayIds.count)種目）") {
-                Button {
-                    programDraft = .new(exerciseIds: todayIds)
-                } label: {
-                    Label("今日の種目を新しいプログラムに保存", systemImage: "square.and.arrow.down")
-                    if let same { Text("「\(same.name)」と同じ内容です") }
-                }
-                .disabled(todayIds.isEmpty || same != nil)
-                // メニューの入れ子には .disabled が効かないため、押せないときは押せないボタンとして出す
-                if todayIds.isEmpty || programStore.programs.isEmpty {
-                    Button("今日の種目で上書き", systemImage: "arrow.triangle.2.circlepath") {}
-                        .disabled(true)
-                } else {
-                    Menu {
-                        ForEach(programStore.programs) { program in
-                            Button {
-                                programDraft = .overwrite(program, with: todayIds)
-                            } label: {
-                                Text(program.name)
-                                if program.exerciseIds == todayIds { Text("今日と同じ内容です") }
-                            }
-                            .disabled(program.exerciseIds == todayIds)
-                        }
-                    } label: {
-                        Label("今日の種目で上書き", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                }
-            }
-        } label: {
-            Text("プログラム")
-        }
+        TodayProgramMenu(programStore: programStore, todayIds: store.todayExerciseIds,
+                         onNew: { programDraft = .new() }, onList: { path.append(ProgramsRoute()) },
+                         onSaveToday: { programDraft = .new(exerciseIds: $0) },
+                         onOverwrite: { programDraft = .overwrite($0, with: $1) })
     }
 
     private func loadPlanned(_ exerciseIds: [UUID]) {
@@ -472,8 +371,14 @@ struct WorkoutView: View {
     }
 
     private var programContext: ProgramContext {
-        ProgramContext(exercisesById: store.exercisesById, alreadyAdded: Set(store.todayExerciseIds),
-                       latestSets: WorkoutSummary.latestDaySets(historyStore.loadedSets, today: today, calendar: calendar))
+        ProgramContext(exercisesById: store.exercisesById, todayCounts: Self.counts(store.todayExerciseIds),
+                       latestSets: WorkoutSummary.latestDaySets(historyStore.loadedSets, today: today, calendar: calendar),
+                       entriesById: historyStore.entriesById)
+    }
+
+    /// 種目 id → 今日のカードの枚数 (「追加済み（n）」とプログラムの件数判定)
+    static func counts(_ exerciseIds: [UUID]) -> [UUID: Int] {
+        exerciseIds.reduce(into: [:]) { $0[$1, default: 0] += 1 }
     }
 
     private func select(_ day: Date) {
@@ -491,13 +396,14 @@ struct WorkoutView: View {
     @ViewBuilder
     private func editorSheet(_ target: EditorTarget) -> some View {
         switch target {
-        case .draft(let exerciseId, let draftId):
-            draftEditorSheet(exerciseId: exerciseId, draftId: draftId)
-        case .completed(let exerciseId, let setId):
+        case .draft(let cardId, let draftId):
+            draftEditorSheet(cardId: cardId, draftId: draftId)
+        case .completed(let cardId, let setId):
             // 取り消し・削除で行が無くなったら何も出さない (それぞれの操作でシートも閉じる)
-            if let exercise = store.exercisesById[exerciseId], let set = store.sets.first(where: { $0.id == setId }) {
-                let completed = store.sets(for: exerciseId)
-                let rows = store.drafts[exerciseId] ?? []
+            if let card = store.card(id: cardId), let exercise = store.exercisesById[card.exerciseId],
+               let set = store.sets.first(where: { $0.id == setId }) {
+                let completed = store.sets(for: card)
+                let rows = store.drafts[cardId] ?? []
                 let number = Self.setNumbers(warmups: completed.map(\.isWarmup) + rows.map(\.input.isWarmup))
                 let position = completed.firstIndex { $0.id == setId } ?? 0
                 CompletedSetEditor(
@@ -505,9 +411,9 @@ struct WorkoutView: View {
                     columns: SetColumn.columns(for: exercise),
                     initial: WorkoutLogic.input(from: set, keepWarmup: true),
                     isWriting: store.isWriting,
-                    message: messages[exerciseId],
+                    message: messages[cardId],
                     restEndsAt: restEndsAt,
-                    onSave: { input in Task { await save(exercise, set: set, input: input) } }
+                    onSave: { input in Task { await save(card, exercise, set: set, input: input) } }
                 )
                 .id(setId)
             }
@@ -515,76 +421,77 @@ struct WorkoutView: View {
     }
 
     @ViewBuilder
-    private func draftEditorSheet(exerciseId: UUID, draftId: UUID) -> some View {
-        if let exercise = store.exercisesById[exerciseId] {
-            let rows = store.drafts[exerciseId] ?? []
-            let number = Self.setNumbers(warmups: store.sets(for: exerciseId).map(\.isWarmup) + rows.map(\.input.isWarmup))
-            let position = store.sets(for: exerciseId).count + (rows.firstIndex { $0.id == draftId } ?? 0)
+    private func draftEditorSheet(cardId: UUID, draftId: UUID) -> some View {
+        if let card = store.card(id: cardId), let exercise = store.exercisesById[card.exerciseId] {
+            let rows = store.drafts[cardId] ?? []
+            let number = Self.setNumbers(warmups: store.sets(for: card).map(\.isWarmup) + rows.map(\.input.isWarmup))
+            let position = store.sets(for: card).count + (rows.firstIndex { $0.id == draftId } ?? 0)
             SetEditorSheet(
                 title: "\(exercise.name)  セット\(number.indices.contains(position) ? number[position] : "")",
                 columns: SetColumn.columns(for: exercise),
                 input: Binding(
                     get: { rows.first { $0.id == draftId }?.input ?? WorkoutSetInput() },
-                    set: { store.updateDraft(exerciseId: exerciseId, draftId: draftId, input: $0) }
+                    set: { store.updateDraft(cardId: cardId, draftId: draftId, input: $0) }
                 ),
                 isWriting: store.isWriting,
-                message: messages[exerciseId],
+                message: messages[cardId],
                 restEndsAt: restEndsAt,
-                onApplyToRemaining: { store.applyToRemaining(exerciseId: exerciseId, from: draftId) },
-                onComplete: { Task { await complete(exercise, draftId: draftId) } }
+                onApplyToRemaining: { store.applyToRemaining(cardId: cardId, from: draftId) },
+                onComplete: { Task { await complete(card, exercise, draftId: draftId) } }
             )
         }
     }
 
     /// 記録済みの行の編集を保存する。completed_at・set_index と休憩タイマーはそのまま
-    private func save(_ exercise: Exercise, set: WorkoutSet, input: WorkoutSetInput) async {
+    private func save(_ card: TodayCard, _ exercise: Exercise, set: WorkoutSet, input: WorkoutSetInput) async {
         Self.dismissKeyboard()
         switch await store.updateSet(set, exercise: exercise, input: input) {
         case .success:
-            messages[exercise.id] = nil
+            messages[card.id] = nil
             editing = nil
         case .failure(let error as WorkoutSetInput.ValidationError):
-            messages[exercise.id] = Self.validationMessage(for: error)
+            messages[card.id] = Self.validationMessage(for: error)
         case .failure(WorkoutSessionStore.StoreError.busy):
             break
         case .failure(let error):
-            messages[exercise.id] = "保存できませんでした: \(error.localizedDescription)"
+            messages[card.id] = "保存できませんでした: \(error.localizedDescription)"
         }
     }
 
     /// 緑の ✓ の取り消し: 未保存の行の先頭に戻して選択する。そのセットが動かしていた休憩は止める
-    private func undo(_ exercise: Exercise, set: WorkoutSet) async {
+    private func undo(_ card: TodayCard, set: WorkoutSet) async {
         switch await store.undoSet(set) {
         case .success(let draftId):
-            messages[exercise.id] = nil
+            messages[card.id] = nil
             if restSetId == set.id {
                 restEndsAt = nil
                 restSetId = nil
             }
-            if editing == .completed(exerciseId: exercise.id, setId: set.id) { editing = nil }
+            if editing == .completed(cardId: card.id, setId: set.id) { editing = nil }
             selectedDraftId = draftId
         case .failure(WorkoutSessionStore.StoreError.busy):
             break
         case .failure(let error):
-            messages[exercise.id] = "取り消せませんでした: \(error.localizedDescription)"
+            messages[card.id] = "取り消せませんでした: \(error.localizedDescription)"
         }
     }
 
-    private func complete(_ exercise: Exercise, draftId: UUID) async {
+    private func complete(_ card: TodayCard, _ exercise: Exercise, draftId: UUID) async {
         Self.dismissKeyboard()
-        let rows = store.drafts[exercise.id] ?? []
-        // 同じカードの次の行。カードの最後なら、下に続く種目の最初の未保存の行へ進む
+        let rows = store.drafts[card.id] ?? []
+        // 同じカードの次の行。カードの最後なら、下に続くカードの最初の未保存の行へ進む
         let next = rows.firstIndex { $0.id == draftId }.flatMap { rows.indices.contains($0 + 1) ? rows[$0 + 1].id : nil }
-            ?? store.todayExerciseIds.drop { $0 != exercise.id }.dropFirst().lazy.compactMap { store.drafts[$0]?.first?.id }.first
+            ?? store.cards.drop { $0.id != card.id }.dropFirst().lazy.compactMap { store.drafts[$0.id]?.first?.id }.first
         let bestBefore = [store.bestOneRMBeforeToday(exerciseId: exercise.id),
                           WorkoutProgress.bestOneRM(store.sets(for: exercise.id))].compactMap { $0 }.max()
-        switch await store.completeDraft(exercise: exercise, draftId: draftId) {
+        switch await store.completeDraft(card: card, exercise: exercise, draftId: draftId) {
         case .success(let set):
-            messages[exercise.id] = nil
+            messages[card.id] = nil
             recordedCount += 1
             editing = nil
             selectedDraftId = next
-            let setCount = store.sets(for: exercise.id).filter { !$0.isWarmup }.count
+            // 番号はカードごとに 1 から (題名は種目名だけ。2 枚目でも「（2回目）」は付けない = Q4)
+            let setCount = store.card(id: card.id).map { store.sets(for: $0).filter { !$0.isWarmup }.count } ?? 0
             restTitle = set.isWarmup ? "\(exercise.name) ウォームアップ" : "\(exercise.name) セット\(setCount)"
             restEndsAt = Date().addingTimeInterval(Self.restSeconds)
             restSetId = set.id
@@ -592,82 +499,16 @@ struct WorkoutView: View {
                 toast = "\(exercise.name) 推定1RM 自己ベスト \(ProgressMetric.estimatedOneRM.format(newBest))"
             }
         case .failure(let error as WorkoutSetInput.ValidationError):
-            messages[exercise.id] = Self.validationMessage(for: error)
+            messages[card.id] = Self.validationMessage(for: error)
         case .failure(WorkoutSessionStore.StoreError.busy):
             break
         case .failure(let error):
-            messages[exercise.id] = "記録できませんでした: \(error.localizedDescription)"
+            messages[card.id] = "記録できませんでした: \(error.localizedDescription)"
         }
-    }
-
-    private func previousSummary(_ exercise: Exercise, position: Int) -> String? {
-        store.previousSet(for: exercise.id, position: position).map {
-            ($0.isWarmup ? "W " : "") + WorkoutLogic.summary(of: $0, kind: exercise.metricKind)
-        }
-    }
-
-    /// セット番号: ウォームアップは「W」、本番セットは 1 から数える
-    static func setNumbers(warmups: [Bool]) -> [String] {
-        var count = 0
-        return warmups.map { isWarmup in
-            if isWarmup { return "W" }
-            count += 1
-            return "\(count)"
-        }
-    }
-
-    static func validationMessage(for error: WorkoutSetInput.ValidationError) -> String {
-        switch error {
-        case .missingWeight: return "重量を入れてください"
-        case .missingReps: return "回数を入れてください"
-        case .missingDuration: return "時間を入れてください"
-        case .negativeValue: return "マイナスの値は記録できません"
-        }
-    }
-
-    static func dismissKeyboard() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     private var errorBinding: Binding<Bool> {
         Binding(get: { (store.error ?? historyStore.error ?? programStore.error) != nil },
                 set: { if !$0 { store.error = nil; historyStore.error = nil; programStore.error = nil } })
-    }
-}
-
-/// 記録済みの行の入力シート。保存するまで store には書かない (値はシートの中だけで持つ)
-private struct CompletedSetEditor: View {
-    let title: String
-    let columns: [SetColumn]
-    let isWriting: Bool
-    let message: String?
-    let restEndsAt: Date?
-    let onSave: (WorkoutSetInput) -> Void
-
-    @State private var input: WorkoutSetInput
-
-    init(title: String, columns: [SetColumn], initial: WorkoutSetInput, isWriting: Bool, message: String?,
-         restEndsAt: Date?, onSave: @escaping (WorkoutSetInput) -> Void) {
-        self.title = title
-        self.columns = columns
-        self.isWriting = isWriting
-        self.message = message
-        self.restEndsAt = restEndsAt
-        self.onSave = onSave
-        _input = State(initialValue: initial)
-    }
-
-    var body: some View {
-        SetEditorSheet(
-            title: title,
-            columns: columns,
-            input: $input,
-            isWriting: isWriting,
-            message: message,
-            restEndsAt: restEndsAt,
-            onApplyToRemaining: nil,
-            onComplete: { onSave(input) },
-            completeTitle: "保存"
-        )
     }
 }

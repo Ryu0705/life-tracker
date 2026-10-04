@@ -11,6 +11,9 @@ struct ExercisePickerView: View {
     }
 
     let exercises: [Exercise]
+    /// 種目 id → すでに入っている枚数 (今日のカード / 編集中のプログラムの行)。0 より多ければ「追加済み（n）」と出す。
+    /// 入っている種目も選べる (同じ種目の 2 枚目・2 行目)。1 回のシートで同じ種目は 1 つまで (2 つ目は開き直す)
+    let todayCounts: [UUID: Int]
     let mode: Mode
     let onAdd: ([Exercise]) -> Void
 
@@ -20,8 +23,9 @@ struct ExercisePickerView: View {
     @State private var selected: [UUID] = []
     @State private var programPath: [WorkoutProgram] = []
 
-    init(exercises: [Exercise], mode: Mode, onAdd: @escaping ([Exercise]) -> Void) {
+    init(exercises: [Exercise], todayCounts: [UUID: Int], mode: Mode, onAdd: @escaping ([Exercise]) -> Void) {
         self.exercises = exercises
+        self.todayCounts = todayCounts
         self.mode = mode
         self.onAdd = onAdd
         if case .replace(let current) = mode {
@@ -53,7 +57,7 @@ struct ExercisePickerView: View {
                                     .frame(width: 28, height: 28)
                                     .background(Circle().fill(Color.accentColor))
                             } else {
-                                Text(exercise.muscleGroup.displayName)
+                                Text(todayCounts[exercise.id].map { "追加済み（\($0)）" } ?? exercise.muscleGroup.displayName)
                                     .font(.caption)
                                     .foregroundStyle(Color.secondary)
                             }

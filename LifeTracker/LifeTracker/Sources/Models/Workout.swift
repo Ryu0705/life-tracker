@@ -80,10 +80,25 @@ struct WorkoutSession: Codable, Identifiable, Hashable {
     var isInProgress: Bool { endedAt == nil }
 }
 
+/// その日 (セッション) に実施した種目 1 回分 = 記録画面のカード (migration 0010)。同じ種目を 2 回やれば 2 行。
+/// sortOrder は「実施した順番」(2026-10-04 本人決定)。未記録のカード (予定) は行を作らない
+struct WorkoutEntry: Codable, Identifiable, Hashable {
+    let id: UUID
+    let sessionId: UUID
+    let exerciseId: UUID
+    let sortOrder: Int
+
+    func with(sortOrder: Int) -> WorkoutEntry {
+        WorkoutEntry(id: id, sessionId: sessionId, exerciseId: exerciseId, sortOrder: sortOrder)
+    }
+}
+
 struct WorkoutSet: Codable, Identifiable, Hashable {
     let id: UUID
     let sessionId: UUID
     let exerciseId: UUID
+    /// どのカード (workout_entry) のセットか。set_index は entry ごとに 1 から
+    let entryId: UUID
     let setIndex: Int
     let weight: Double?
     let reps: Int?
@@ -97,14 +112,14 @@ struct WorkoutSet: Codable, Identifiable, Hashable {
 extension WorkoutSet {
     /// 詰め直し後の番号 (WorkoutLogic.removingAndRenumbering)
     func with(setIndex: Int) -> WorkoutSet {
-        WorkoutSet(id: id, sessionId: sessionId, exerciseId: exerciseId, setIndex: setIndex,
+        WorkoutSet(id: id, sessionId: sessionId, exerciseId: exerciseId, entryId: entryId, setIndex: setIndex,
                    weight: weight, reps: reps, durationSec: durationSec, distanceM: distanceM,
                    rpe: rpe, isWarmup: isWarmup, completedAt: completedAt)
     }
 
     /// 編集後の値。completed_at・set_index はそのまま
     func with(values: WorkoutSetInput.Validated) -> WorkoutSet {
-        WorkoutSet(id: id, sessionId: sessionId, exerciseId: exerciseId, setIndex: setIndex,
+        WorkoutSet(id: id, sessionId: sessionId, exerciseId: exerciseId, entryId: entryId, setIndex: setIndex,
                    weight: values.weight, reps: values.reps, durationSec: values.durationSec, distanceM: values.distanceM,
                    rpe: rpe, isWarmup: values.isWarmup, completedAt: completedAt)
     }

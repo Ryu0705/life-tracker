@@ -6,6 +6,8 @@ import SwiftUI
 /// 追加する全編集要素をゲートする (structural-conventions C-5)
 struct PastDayView: View {
     let sets: [WorkoutSet]
+    /// その日の entry。カード = entry ごとに 1 枚、sort_order (実施した順) で並べる。セットの無い entry は出さない
+    let entries: [WorkoutEntry]
     let exercisesById: [UUID: Exercise]
     let isLoaded: Bool
     let onOpenExercise: (UUID) -> Void
@@ -19,9 +21,9 @@ struct PastDayView: View {
                 Text("この日の記録はありません")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(WorkoutLogic.groupByExercise(sets), id: \.exerciseId) { entry in
-                    if let exercise = exercisesById[entry.exerciseId] {
-                        PastExerciseCard(exercise: exercise, sets: entry.sets) { onOpenExercise(exercise.id) }
+                ForEach(WorkoutLogic.groupByEntry(sets: sets, entries: entries).filter { !$0.sets.isEmpty }, id: \.entry.id) { group in
+                    if let exercise = exercisesById[group.entry.exerciseId] {
+                        PastExerciseCard(exercise: exercise, sets: group.sets) { onOpenExercise(exercise.id) }
                     }
                 }
             }

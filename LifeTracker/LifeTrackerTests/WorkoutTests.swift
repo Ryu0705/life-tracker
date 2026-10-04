@@ -12,10 +12,37 @@ private func exercise(_ name: String, _ kind: MetricKind, id: UUID = UUID()) -> 
     Exercise(id: id, name: name, muscleGroup: .chest, equipment: nil, metricKind: kind, note: nil, isArchived: false, sortOrder: nil)
 }
 
+/// entry を指定しなければ (セッション, 種目) ごとに 1 つ (migration 0010 の backfill と同じ単位)
 private func set(session: UUID, exercise: UUID, index: Int, weight: Double? = nil, reps: Int? = nil,
-                 warmup: Bool = false, at: Date = Date()) -> WorkoutSet {
-    WorkoutSet(id: UUID(), sessionId: session, exerciseId: exercise, setIndex: index, weight: weight, reps: reps,
+                 warmup: Bool = false, at: Date = Date(), entry: UUID? = nil) -> WorkoutSet {
+    WorkoutSet(id: UUID(), sessionId: session, exerciseId: exercise, entryId: entry ?? backfillEntryId(session, exercise),
+               setIndex: index, weight: weight, reps: reps,
                durationSec: nil, distanceM: nil, rpe: nil, isWarmup: warmup, completedAt: at)
+}
+
+/// (セッション, 種目) から決まる entry id (2 つの UUID のバイトの XOR)
+func backfillEntryId(_ session: UUID, _ exercise: UUID) -> UUID {
+    let a = withUnsafeBytes(of: session.uuid) { Array($0) }
+    let b = withUnsafeBytes(of: exercise.uuid) { Array($0) }
+    let x = zip(a, b).map { $0 ^ $1 }
+    return UUID(uuid: (x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7], x[8], x[9], x[10], x[11], x[12], x[13], x[14], x[15]))
+}
+
+extension WorkoutSessionStore {
+    /// テスト用: その種目の最後のカード (無ければ足す) に記録する
+    @discardableResult
+    func addSet(exercise: Exercise, input: WorkoutSetInput) async -> Result<WorkoutSet, Error> {
+        let card: TodayCard
+        if let last = cards.last(where: { $0.exerciseId == exercise.id }) {
+            card = last
+        } else {
+            card = await addPlannedExercise(exercise.id)
+        }
+        return await addSet(card: card, exercise: exercise, input: input)
+    }
+
+    /// テスト用: その種目の最初のカード
+    func firstCard(_ exerciseId: UUID) -> TodayCard? { cards.first { $0.exerciseId == exerciseId } }
 }
 
 @Suite("WorkoutSetInput.validate — metric_kind ごとの列の整合")
@@ -66,16 +93,16 @@ struct WorkoutLogicTests {
     let bench = UUID()
     let squat = UUID()
 
-    @Test("nextSetIndex は種目ごとの最大 + 1 (削除で空いた番号は再利用しない)")
+    @Test("nextSetIndex は entry ごとの最大 + 1 (削除で空いた番号は再利用しない)")
     func nextSetIndex() {
         let sets = [set(session: session, exercise: bench, index: 1), set(session: session, exercise: bench, index: 3),
                     set(session: session, exercise: squat, index: 1)]
-        #expect(WorkoutLogic.nextSetIndex(for: bench, in: sets) == 4)
-        #expect(WorkoutLogic.nextSetIndex(for: squat, in: sets) == 2)
-        #expect(WorkoutLogic.nextSetIndex(for: UUID(), in: sets) == 1)
+        #expect(WorkoutLogic.nextSetIndex(forEntry: backfillEntryId(session, bench), in: sets) == 4)
+        #expect(WorkoutLogic.nextSetIndex(forEntry: backfillEntryId(session, squat), in: sets) == 2)
+        #expect(WorkoutLogic.nextSetIndex(forEntry: UUID(), in: sets) == 1)
     }
 
-    @Test("groupByExercise は最初に記録した種目順・set_index 順")
+    @Test("groupByEntry は entry の sort_order 順 (記録時刻順ではない)・set_index 順")
     func group() {
         let t0 = date("2026-09-30T07:00:00+09:00")
         let sets = [
@@ -83,9 +110,11 @@ struct WorkoutLogicTests {
             set(session: session, exercise: bench, index: 2, at: t0.addingTimeInterval(120)),
             set(session: session, exercise: bench, index: 1, at: t0),
         ]
-        let grouped = WorkoutLogic.groupByExercise(sets)
-        #expect(grouped.map(\.exerciseId) == [bench, squat])
-        #expect(grouped[0].sets.map(\.setIndex) == [1, 2])
+        let entries = [WorkoutEntry(id: backfillEntryId(session, bench), sessionId: session, exerciseId: bench, sortOrder: 2),
+                       WorkoutEntry(id: backfillEntryId(session, squat), sessionId: session, exerciseId: squat, sortOrder: 1)]
+        let grouped = WorkoutLogic.groupByEntry(sets: sets, entries: entries)
+        #expect(grouped.map(\.entry.exerciseId) == [squat, bench])
+        #expect(grouped[1].sets.map(\.setIndex) == [1, 2])
     }
 
     @Test("initialDrafts は前回の日のセットを行ごとに写し、今日記録済みの行数ぶんは消化済みとする")
@@ -131,7 +160,7 @@ struct WorkoutLogicTests {
     func summary() {
         #expect(WorkoutLogic.summary(of: set(session: session, exercise: bench, index: 1, weight: 62.5, reps: 8), kind: .weightReps) == "62.5×8")
         #expect(WorkoutLogic.summary(of: set(session: session, exercise: bench, index: 1, weight: 60, reps: 10), kind: .weightReps) == "60×10")
-        let run = WorkoutSet(id: UUID(), sessionId: session, exerciseId: bench, setIndex: 1, weight: nil, reps: nil,
+        let run = WorkoutSet(id: UUID(), sessionId: session, exerciseId: bench, entryId: UUID(), setIndex: 1, weight: nil, reps: nil,
                              durationSec: 1230, distanceM: 3200, rpe: nil, isWarmup: false, completedAt: nil)
         #expect(WorkoutLogic.summary(of: run, kind: .durationDistance) == "20:30・3.20km")
     }
@@ -153,10 +182,13 @@ struct MockWorkoutDataSourceTests {
     func deleteCascade() async throws {
         let source = MockWorkoutDataSource()
         let s = try await source.startSession(routineId: nil, startedAt: Date())
-        _ = try await source.addSet(NewWorkoutSet(sessionId: s.id, exerciseId: UUID(), setIndex: 1, weight: 10, reps: 10,
+        let exerciseId = UUID()
+        let entry = try await source.addEntry(sessionId: s.id, exerciseId: exerciseId, sortOrder: 1)
+        _ = try await source.addSet(NewWorkoutSet(sessionId: s.id, exerciseId: exerciseId, entryId: entry.id, setIndex: 1, weight: 10, reps: 10,
                                                   durationSec: nil, distanceM: nil, isWarmup: false, completedAt: Date()))
         try await source.deleteSession(id: s.id)
         #expect(source.sets.isEmpty)
+        #expect(source.entries.isEmpty)
         #expect(try await source.fetchInProgressSession() == nil)
     }
 }
@@ -168,13 +200,23 @@ struct WorkoutDecodingTests {
     func decode() throws {
         let json = """
         [{"id":"8C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F","session_id":"1C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F",
-          "exercise_id":"2C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F","set_index":2,"weight":62.50,"reps":8,
+          "exercise_id":"2C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F","entry_id":"3C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F",
+          "set_index":2,"weight":62.50,"reps":8,
           "duration_sec":null,"distance_m":null,"rpe":null,"is_warmup":false,
           "completed_at":"2026-09-30T07:12:34.123456+09:00"}]
         """.data(using: .utf8)!
         let sets = try JSONDecoder.supabase.decode([WorkoutSet].self, from: json)
         #expect(sets.first?.weight == 62.5)
         #expect(sets.first?.setIndex == 2)
+        #expect(sets.first?.entryId == UUID(uuidString: "3C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F"))
+
+        let entryJSON = """
+        [{"id":"3C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F","session_id":"1C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F",
+          "exercise_id":"2C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F","sort_order":3}]
+        """.data(using: .utf8)!
+        let entries = try JSONDecoder.supabase.decode([WorkoutEntry].self, from: entryJSON)
+        #expect(entries.first?.sortOrder == 3)
+        #expect(entries.first?.sessionId == UUID(uuidString: "1C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F"))
 
         let exerciseJSON = """
         [{"id":"8C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F","name":"プランク","muscle_group":"full_body",
@@ -312,9 +354,10 @@ struct WorkoutSessionStoreTests {
         let store = WorkoutSessionStore(dataSource: source, calendar: jst)
         await store.load()
         let input = WorkoutSetInput(weight: 60, reps: 10)
+        let card = await store.addPlannedExercise(bench.id)
 
-        async let first = store.addSet(exercise: bench, input: input)
-        async let second = store.addSet(exercise: bench, input: input)
+        async let first = store.addSet(card: card, exercise: bench, input: input)
+        async let second = store.addSet(card: card, exercise: bench, input: input)
         let results = await [first, second]
 
         #expect(results.filter { if case .success = $0 { return true } else { return false } }.count == 1)
@@ -370,21 +413,21 @@ struct WorkoutSessionStoreTests {
 
         clock.now = date("2026-09-30T07:00:00+09:00")
         await store.load()
-        await store.addPlannedExercise(bench.id)
-        let drafts = try #require(store.drafts[bench.id])
+        let card = await store.addPlannedExercise(bench.id)
+        let drafts = try #require(store.drafts[card.id])
         #expect(drafts.map(\.input.weight) == [60, 65])
-        #expect(store.previousSet(for: bench.id, position: 1)?.weight == 65)
+        #expect(store.previousSet(for: card, position: 1)?.weight == 65)
 
         var edited = drafts[0].input
         edited.weight = 62.5
-        store.updateDraft(exerciseId: bench.id, draftId: drafts[0].id, input: edited)
-        let result = await store.completeDraft(exercise: bench, draftId: drafts[0].id)
+        store.updateDraft(cardId: card.id, draftId: drafts[0].id, input: edited)
+        let result = await store.completeDraft(card: card, exercise: bench, draftId: drafts[0].id)
         #expect((try? result.get())?.weight == 62.5)
-        #expect(store.drafts[bench.id]?.map(\.input.weight) == [65])
+        #expect(store.drafts[card.id]?.map(\.input.weight) == [65])
         #expect(store.sets(for: bench.id).count == 1)
 
-        store.addDraft(exerciseId: bench.id)
-        #expect(store.drafts[bench.id]?.map(\.input.weight) == [65, 65])
+        store.addDraft(cardId: card.id)
+        #expect(store.drafts[card.id]?.map(\.input.weight) == [65, 65])
     }
 
     @Test("残りのセットに適用: 下の行だけ同じ値になり、ウォームアップ区分は各行のまま")
@@ -398,14 +441,14 @@ struct WorkoutSessionStoreTests {
         _ = await store.addSet(exercise: bench, input: WorkoutSetInput(weight: 65, reps: 8))
         clock.now = date("2026-09-30T07:00:00+09:00")
         await store.load()
-        await store.addPlannedExercise(bench.id)
-        let drafts = try #require(store.drafts[bench.id])
+        let card = await store.addPlannedExercise(bench.id)
+        let drafts = try #require(store.drafts[card.id])
         var edited = drafts[1].input
         edited.weight = 70
-        store.updateDraft(exerciseId: bench.id, draftId: drafts[1].id, input: edited)
-        store.applyToRemaining(exerciseId: bench.id, from: drafts[1].id)
-        #expect(store.drafts[bench.id]?.map(\.input.weight) == [40, 70, 70])
-        #expect(store.drafts[bench.id]?.map(\.input.isWarmup) == [true, false, false])
+        store.updateDraft(cardId: card.id, draftId: drafts[1].id, input: edited)
+        store.applyToRemaining(cardId: card.id, from: drafts[1].id)
+        #expect(store.drafts[card.id]?.map(\.input.weight) == [40, 70, 70])
+        #expect(store.drafts[card.id]?.map(\.input.isWarmup) == [true, false, false])
         #expect(store.bestOneRMBeforeToday(exerciseId: bench.id) == WorkoutProgress.estimatedOneRM(weight: 65, reps: 8))
     }
 
@@ -450,7 +493,7 @@ struct WorkoutSetEditTests {
         return (source, store, clock)
     }
 
-    @Test("Mock の削除は同じセッション×種目の残りだけを 1..n に詰め、他の種目・セッションは触らない。無い id は何もしない")
+    @Test("Mock の削除は同じ entry の残りだけを 1..n に詰め、他の種目・セッションは触らない。無い id は何もしない")
     func mockDeleteRenumbers() async throws {
         let session = UUID(), other = UUID(), squat = UUID()
         let target = set(session: session, exercise: bench.id, index: 2)
@@ -491,18 +534,19 @@ struct WorkoutSetEditTests {
     func undoRestoresDraft() async throws {
         let (source, store, _) = await recordedStore()
         _ = await store.addSet(exercise: bench, input: WorkoutSetInput(weight: 40, reps: 12, isWarmup: true))
-        let draftsBefore = store.drafts[bench.id] ?? []
+        let cardId = try #require(store.firstCard(bench.id)).id
+        let draftsBefore = store.drafts[cardId] ?? []
         let first = try #require(store.sets(for: bench.id).first)
         let last = try #require(store.sets(for: bench.id).last)
 
         let draftId = try (await store.undoSet(last)).get()
-        #expect(store.drafts[bench.id]?.first?.id == draftId)
-        #expect(store.drafts[bench.id]?.first?.input == WorkoutSetInput(weight: 40, reps: 12, isWarmup: true))
-        #expect(store.drafts[bench.id]?.count == draftsBefore.count + 1)
+        #expect(store.drafts[cardId]?.first?.id == draftId)
+        #expect(store.drafts[cardId]?.first?.input == WorkoutSetInput(weight: 40, reps: 12, isWarmup: true))
+        #expect(store.drafts[cardId]?.count == draftsBefore.count + 1)
         #expect(!source.sets.contains { $0.id == last.id })
 
         _ = try (await store.undoSet(first)).get()
-        #expect(store.drafts[bench.id]?.prefix(2).map(\.input.weight) == [60, 40])
+        #expect(store.drafts[cardId]?.prefix(2).map(\.input.weight) == [60, 40])
         #expect(source.sets.sorted { $0.setIndex < $1.setIndex }.map(\.weight) == [65, 70])
         #expect(source.sets.map(\.setIndex).sorted() == [1, 2])
         #expect(store.sets(for: bench.id).map(\.setIndex) == [1, 2])
@@ -515,7 +559,8 @@ struct WorkoutSetEditTests {
         let second = try #require(store.sets(for: bench.id).first { $0.setIndex == 2 })
         let draftId = try (await store.undoSet(second)).get()
         clock.now = clock.now.addingTimeInterval(60)
-        let redone = try (await store.completeDraft(exercise: bench, draftId: draftId)).get()
+        let card = try #require(store.firstCard(bench.id))
+        let redone = try (await store.completeDraft(card: card, exercise: bench, draftId: draftId)).get()
         #expect(redone.weight == 65)
         #expect(redone.setIndex == 3)
         #expect(redone.completedAt == clock.now)

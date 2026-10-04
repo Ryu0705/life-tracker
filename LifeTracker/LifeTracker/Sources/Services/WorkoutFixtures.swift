@@ -35,7 +35,8 @@ enum WorkoutFixtures {
         func s(_ sec: Int) -> Row { (nil, nil, sec) }
 
         // 直近 4 週: 胸の日・背中の日・脚の日を各 2 回 (胸の日・背中の日・脚の日はプログラムにも登録済み) + ベンチ単独の日 (推移グラフ用)。
-        // ベンチの最新は 2 日前の 60×10 / 65×8 / 65×6。昨日は背中の日 (過去日表示の確認用)
+        // ベンチの最新は 2 日前の 60×10 / 65×8 / 65×6 と、最後にもう一度ベンチ 50×12 / 50×10 (同じ種目を 2 回やった日)。
+        // 昨日は背中の日 (過去日表示の確認用)
         let chestDay: (Double) -> [(Exercise, [Row])] = { top in
             [(bench, [w(60, 10), w(top, 8), w(top, 6)]), (incline, [w(20, 12), w(20, 10), w(22, 8)]), (pushdown, [w(25, 12), w(25, 12)])]
         }
@@ -49,7 +50,7 @@ enum WorkoutFixtures {
             (9, chestDay(62.5)),
             (8, backDay),
             (5, [(squat, [w(70, 8), w(72.5, 6), w(72.5, 6)]), (legPress, [w(130, 12), w(140, 10)]), (plank, [s(60), s(45)])]),
-            (2, chestDay(65)),
+            (2, chestDay(65) + [(bench, [w(50, 12), w(50, 10)])]),
             (1, backDay),
         ]
 
@@ -64,9 +65,11 @@ enum WorkoutFixtures {
             sessions.append(session)
             var at = start
             for (exercise, rows) in entry.entries {
+                // 1 かたまり = 1 entry (MockWorkoutDataSource が記録順に sort_order を振る)
+                let entryId = UUID()
                 for (index, row) in rows.enumerated() {
                     let distance = exercise.metricKind == .durationDistance ? row.sec.map { Double($0) * 3 } : nil
-                    sets.append(WorkoutSet(id: UUID(), sessionId: session.id, exerciseId: exercise.id, setIndex: index + 1,
+                    sets.append(WorkoutSet(id: UUID(), sessionId: session.id, exerciseId: exercise.id, entryId: entryId, setIndex: index + 1,
                                            weight: row.weight, reps: row.reps, durationSec: row.sec, distanceM: distance,
                                            rpe: nil, isWarmup: false, completedAt: at))
                     at = at.addingTimeInterval(180)

@@ -8,6 +8,8 @@ import Combine
 final class WorkoutHistoryStore: ObservableObject {
     /// 週頭 (月曜 0:00) → その週のセット
     @Published private(set) var weeks: [Date: [WorkoutSet]] = [:]
+    /// ロード済みの週のセッションの entry (過去日のカードの単位と並び)
+    @Published private(set) var entriesById: [UUID: WorkoutEntry] = [:]
     /// 1 回でも記録がある種目 (分析画面の推移一覧用)
     @Published private(set) var recordedExerciseIds: Set<UUID> = []
     @Published private(set) var isLoading = false
@@ -50,7 +52,10 @@ final class WorkoutHistoryStore: ObservableObject {
         }
         do {
             let fetched = try await dataSource.fetchSets(completedFrom: from, to: to)
+            let sessionIds = Set(fetched.map(\.sessionId)).subtracting(entriesById.values.map(\.sessionId))
+            let entries = sessionIds.isEmpty ? [] : try await dataSource.fetchEntries(sessionIds: Array(sessionIds))
             guard startedGeneration == generation else { return }
+            for entry in entries { entriesById[entry.id] = entry }
             let byWeek = Dictionary(grouping: fetched) { WorkoutSummary.weekStart(containing: $0.completedAt!, calendar: calendar) }
             for start in targets { weeks[start] = byWeek[start] ?? [] }
         } catch {
@@ -71,12 +76,18 @@ final class WorkoutHistoryStore: ObservableObject {
         generation += 1
         inFlight = [] // 取得中の結果は捨てるので、同じ週をすぐ取り直せるようにする
         weeks = [:]
+        entriesById = [:]
     }
 
     func sets(on day: Date) -> [WorkoutSet] {
         let key = WorkoutSummary.dayKey(day, calendar: calendar)
         return sets(inWeekStarting: WorkoutSummary.weekStart(containing: day, calendar: calendar))
             .filter { $0.completedAt.map { WorkoutSummary.dayKey($0, calendar: calendar) == key } ?? false }
+    }
+
+    /// その日の entry (セットのある entry だけ。0 時またぎのセッションは、その日にセットがある entry だけ = E4)
+    func entries(on day: Date) -> [WorkoutEntry] {
+        Set(sets(on: day).map(\.entryId)).compactMap { entriesById[$0] }
     }
 
     func sets(inWeekStarting weekStart: Date) -> [WorkoutSet] {
