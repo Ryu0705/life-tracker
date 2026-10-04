@@ -1,5 +1,11 @@
 # Life Tracker v2 — ドメインモデル v16
 
+> **2026-09-30 追記（予定タブ段階 1。詳細 SSOT は `day-cycle-walkthrough.md`「段階 1 確定仕様」）**
+> - 繰り返しの予定は**世代管理**: `task_template` は系列の id を保つ表になり、中身は `task_template_version`（effective_from ごと、`is_ended` = これ以降を削除）に持つ。祝日パターンへの登録も `pattern_version_membership` で世代ごと（migration 0006、本番適用済）。`task_template` の旧列と `pattern_template_membership` は 0011 で削除予定（実機確認後。0007 は段階 2 のチェックイン、0008 はトレーニングのセット連番、0009 は睡眠の sleep_record、0010 はトレーニングの workout_entry で使用）
+> - 下の「F-A 3 択」「E-A」は、**「この予定」「これ以降のすべての予定」の 2 択**（過去日は編集不可のため Google の「すべて」= 編集日以降）に置き換えた。書き込みは DB 関数（RPC）で原子的に行い、関数内で「編集日 ≥ JST の今日」を検査する
+> - 休日パターン（apply_day = Holiday）は常に 1 件ある前提（0006 で固定。アプリは作らない）。第 1 世代の effective_from = 2026-04-26 は近似
+> - 未来日表示は前倒し（spec.md）
+
 DDL レベル + 設計判断 + DayBuilder + Phase 2 持ち越し論点を集約した SSOT。
 
 **v16 (2026-08-31)**: トレーニング・サブドメインを追加し `gym_actual_input` を撤去。判断根拠は `training-domain-design.md`。
@@ -145,6 +151,8 @@ CREATE TABLE day_meta (
 -- Phase 1 で実装: sleep のみ (gym は下記トレーニング・サブドメインへ移行)
 -- ============================================================
 
+-- 2026-10-03: sleep_actual_input は廃止（migration 0009 で DROP）。睡眠は専用の表 sleep_record(id, start_at, end_at, kind 'sleep'|'nap', created_at) に持ち、
+--   actual_task・予定とはつながない。どの夜かは端末で計算（就寝 − 12h の JST 日）。設計は docs/sleep-design/synthesis.md・implementation-plan.md
 CREATE TABLE sleep_actual_input (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   actual_task_id UUID NOT NULL UNIQUE REFERENCES actual_task (id) ON DELETE CASCADE,
@@ -270,7 +278,7 @@ CREATE INDEX workout_set_exercise_idx ON workout_set (exercise_id);
   - `scheduled_task` / `actual_task`: `start_at TIMESTAMPTZ + end_at TIMESTAMPTZ` (絶対)
   - rrule 評価時に「当日に投影する」処理を型システムで強制
 - **task_template は rrule + pattern_template_membership の両方で参照される**: rrule で発生日を持つ template は通常日に出る、membership で参照される template は pattern 適用日に出る、両方持つ template は両方の機構で出る (ただし pattern 適用日は rrule 由来は出ず membership のみ)
-- **予実紐付けなし**: scheduled_task / actual_task は FK で結ばない。予実比較はクライアント側で `Day.scheduled` vs `Day.actual` を category 別に集計して比較
+- ~~**予実紐付けなし**: scheduled_task / actual_task は FK で結ばない。~~ → **2026-09-30 改訂（本人承認）: 実績は予定の回を緩く参照する（template_id＋occurrence_date／scheduled_task_id、SET NULL）。structural-conventions D-4 の改訂を参照**。旧文: 予実比較はクライアント側で `Day.scheduled` vs `Day.actual` を category 別に集計して比較
 - **1 タスク 1 種別 + 時刻重複許容**: 横断 (ジム+PMBOK) は同時刻並列で表現、tags の重複集計問題を回避
 - **category 正規化**: 文字列直書きせず category マスタ + FK 参照
 - **サブ入力種別**: `category.sub_input_kind` の CHECK 列で表現 (sub_input_type マスタは不要、二重管理回避)。Phase 2 で `learning` 追加時は ALTER TABLE 1 行で済む
@@ -285,7 +293,7 @@ CREATE INDEX workout_set_exercise_idx ON workout_set (exercise_id);
 - **並列タスク**: 予実両方で時刻重複許容 (DB 制約に重複禁止を入れない)
 - **B-X 由来識別の不変条件は CHECK 制約**: `scheduled_task_origin_chk` で `pattern_id NOT NULL → template_id NOT NULL` を DB レベルで固定。第 4 状態 (`template_id NULL かつ pattern_id NOT NULL`) を構造的に発生させない
 - **template / pattern の物理 DELETE は ON DELETE RESTRICT**: 参照する scheduled_task / day_meta が存在する間は物理削除不可。論理削除 (rrule NULL + UNTIL) と「pattern 切替で日を移送」のフローでカバー
-- **sleep day attribution は HealthKit 同型を Phase 2 で採用予定**: 通常タスクは `start_at がこの day に属する` を primary とするが、`sleep_actual_input` については Phase 2 で **HealthKit と同型 (endDate ベース + 18:00 境界)** を採用する。具体的には `DayBuilderContext` に `sleepDayAttribution` 注入点を設けて切替 (Phase 1 の DayBuilder 構造を変えずに後付け可能)。23:00→翌7:00 の睡眠を「翌日の睡眠」としてカードに出す UX を実現
+- **（2026-10-03 置き換え: 睡眠は `sleep_record` に移り、どの夜かは就寝 − 12h の JST 日、予定タブの行とは時刻の重なりで結ぶ。HealthKit 取り込みは作らない（本人「B 今回は手入力だけ」）。以下は旧方針）** **sleep day attribution は HealthKit 同型を Phase 2 で採用予定**: 通常タスクは `start_at がこの day に属する` を primary とするが、`sleep_actual_input` については Phase 2 で **HealthKit と同型 (endDate ベース + 18:00 境界)** を採用する。具体的には `DayBuilderContext` に `sleepDayAttribution` 注入点を設けて切替 (Phase 1 の DayBuilder 構造を変えずに後付け可能)。23:00→翌7:00 の睡眠を「翌日の睡眠」としてカードに出す UX を実現
 
 ---
 
@@ -577,6 +585,8 @@ Phase 1 設計では塞いでいないが、Phase 2 着手前に方針を決め�
 - 連携実装前に明文化必須
 
 ### HealthKit sleep の DayMembership 別ロジック注入
+
+> 2026-10-03: 旧方針。睡眠は `sleep_record` に移った（上の注記）。取り込むときは `sleep_record` に列を足す形で考え直す
 
 - `DayBuilderContext` に `sleepDayAttribution: SleepAttributionRule` を追加
 - `category=sleep` の actual_task に対しては HealthKit 同型 (endDate + 18:00 境界) で primary day を計算

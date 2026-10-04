@@ -162,7 +162,7 @@ opacity の低減は**外側の VStack / HStack に委ねる** (compound 回避)
 ### C-6. 派生元データと同期カラムの二重管理は禁止 (v2 では同期カラム廃止)
 **ルール**: 状態の真実 (source of truth) を「**手動トグル UI**」と「**派生元データ**」で二重管理しない。
 
-**v2 での扱い**: v2 では `actual_task` + `gym_actual_input` / `sleep_actual_input` の構造で「派生元データのみ持つ」設計に切り替えた (v1 の `daily_logs.did_*` 同期カラムは廃止)。本規約は将来同種の問題が再燃した場合の指針として継承。
+**v2 での扱い**: v2 では `actual_task` + `gym_actual_input` / `sleep_actual_input` の構造で（2026-10-03: `sleep_actual_input` は廃止し睡眠は独立の表 `sleep_record`。派生元だけ持つ方針は同じ）「派生元データのみ持つ」設計に切り替えた (v1 の `daily_logs.did_*` 同期カラムは廃止)。本規約は将来同種の問題が再燃した場合の指針として継承。
 
 **Why**: 手動トグルと派生元データの並立は「親未チェックなのに詳細は 1 件」のような状態乖離バグの温床 (項目 13 根拠)。詳細な v1 OK / NG パターンは `~/dev/life-tracker-archive/` 参照。
 
@@ -217,6 +217,8 @@ opacity の低減は**外側の VStack / HStack に委ねる** (compound 回避)
 ---
 
 ### D-4. plan / actual は DB で完全独立、UI 層で結合
+> **2026-09-30 改訂（本人承認・段階 2 チェックイン C1）**: `actual_task` は予定の回を**緩く参照**してよい（`template_id`＋`occurrence_date`／`scheduled_task_id`、FK は ON DELETE SET NULL）。予定を消しても実績は残り、つながりだけ外れる。予定を変えても過去の実績は変わらない。予定側の RPC が実績に触れてよいのは「つながりの列（単発↔繰り返しの変換でのつなぎ直し）」と「skipped の行の削除」だけ。下の NG 例 1 は、この緩い参照に限って解除。NG 例 2〜4（事前 join の View・集計キャッシュ・トリガーでの相互更新）は引き続き禁止。経緯は `docs/day-cycle-walkthrough.md` 段階 2
+> **2026-10-03 例**: 睡眠の記録 `sleep_record` は予定・予定の種類と**参照を持たない完全独立**の例（トレーニングの表示時判定と同じ）。予定タブの睡眠の行とは UI 層で時刻の重なりで結ぶ（OK 例 1・2）。経緯は `docs/sleep-design/synthesis.md`
 **ルール**: `scheduled_task` (plan) と `actual_task` (actual) は DB 永続層で完全独立させる。UI 層に限り「表示・derived 判定・Service computed property」での結合を許容する。
 
 **OK 例 (UI 層結合の許容)**:
@@ -226,7 +228,7 @@ opacity の低減は**外側の VStack / HStack に委ねる** (compound 回避)
 4. Service 側で「dismissal Set + actual + plan」を横断する predicate helper
 
 **NG 例 (永続層結合の禁止 — Round 1 DDL から発火)**:
-1. `actual_task` に `scheduled_task_id` 列や FK を追加する
+1. ~~`actual_task` に `scheduled_task_id` 列や FK を追加する~~（2026-09-30 改訂で、ON DELETE SET NULL の緩い参照に限り可）
 2. SQL View / RPC で plan + actual を事前 join する
 3. `scheduled_task` に actual 側の集計キャッシュ列を追加する
 4. DB トリガーで一方が他方を INSERT / UPDATE / DELETE する

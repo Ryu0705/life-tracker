@@ -119,16 +119,16 @@ v2 ではコアの解像度を上げてから実装に入る。スコープ判�
   - **テンプレ / パターン / カテゴリ管理 UI** (CRUD、exdate 編集含む。本人運用継続のため Phase 1 内で必要)
   - **トレーニング記録** (セッション / セット単位。種目マスタ・ルーティン管理を含む) — v16 で追加
   - **トレーニング進捗の可視化** (PR / 推定1RM / ボリューム推移 / 部位別バランス / 連続週数)
-  - 未来日表示は **Phase 1 範囲外** (pattern 編集後の波及確認は当日 + 過去日のみで運用)
+  - ~~未来日表示は **Phase 1 範囲外**~~ → **2026-09-30 本人決定で前倒し**: 予定タブの週帯で過去・未来の日へ移れる。過去日は予定を編集できない（実績入力だけ可）。繰り返しの予定は世代管理（`day-cycle-walkthrough.md`）
 
 ### Phase 2 以降の持ち越し
 
 - Apple Watch / Live Activity / Dynamic Island
-- HealthKit 連携 (Phase 2、sleep_actual_input への INSERT、endDate + 18:00 境界)
+- HealthKit 連携 (Phase 2。2026-10-03 本人「B 今回は手入力だけ」で今回は作らない。取り込むなら睡眠は `sleep_record` へ。旧: sleep_actual_input への INSERT、endDate + 18:00 境界)
 - Mac mini サーバー連携 (別プロジェクト `project_mac_mini_server`)
 - iCalendar export / EventKit 同期 (`domain-model.md` 末尾の持ち越し論点参照)
 - learning_actual_input (PMBOK 計画統合の要件確定後)
-- 未来日表示・未来日 pattern プレビュー
+- ~~未来日表示~~（2026-09-30 前倒し済）・未来日 pattern プレビュー
 
 ---
 
