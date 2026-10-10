@@ -1,7 +1,7 @@
 # Life Tracker v2 — ドメインモデル v16
 
 > **2026-09-30 追記（予定タブ段階 1。詳細 SSOT は `day-cycle-walkthrough.md`「段階 1 確定仕様」）**
-> - 繰り返しの予定は**世代管理**: `task_template` は系列の id を保つ表になり、中身は `task_template_version`（effective_from ごと、`is_ended` = これ以降を削除）に持つ。祝日パターンへの登録も `pattern_version_membership` で世代ごと（migration 0006、本番適用済）。`task_template` の旧列と `pattern_template_membership` は 0011 で削除予定（実機確認後。0007 は段階 2 のチェックイン、0008 はトレーニングのセット連番、0009 は睡眠の sleep_record、0010 はトレーニングの workout_entry で使用）
+> - 繰り返しの予定は**世代管理**: `task_template` は系列の id を保つ表になり、中身は `task_template_version`（effective_from ごと、`is_ended` = これ以降を削除）に持つ。祝日パターンへの登録も `pattern_version_membership` で世代ごと（migration 0006、本番適用済）。`task_template` の旧列と `pattern_template_membership` は 0012（10/7: プロフィール/体重 `user_profile`・`body_weight_record` が 0011 を使用、`body-strength-and-heatmap-period.md`） で削除予定（実機確認後。0007 は段階 2 のチェックイン、0008 はトレーニングのセット連番、0009 は睡眠の sleep_record、0010 はトレーニングの workout_entry で使用）
 > - 下の「F-A 3 択」「E-A」は、**「この予定」「これ以降のすべての予定」の 2 択**（過去日は編集不可のため Google の「すべて」= 編集日以降）に置き換えた。書き込みは DB 関数（RPC）で原子的に行い、関数内で「編集日 ≥ JST の今日」を検査する
 > - 休日パターン（apply_day = Holiday）は常に 1 件ある前提（0006 で固定。アプリは作らない）。第 1 世代の effective_from = 2026-04-26 は近似
 > - 未来日表示は前倒し（spec.md）
@@ -244,6 +244,9 @@ CREATE INDEX workout_session_started_at_idx ON workout_session (started_at DESC)
 CREATE UNIQUE INDEX workout_session_single_in_progress
   ON workout_session ((ended_at IS NULL)) WHERE ended_at IS NULL;
 
+-- 2026-10-04 (migration 0010): 「その日に実施した種目 1 回分 = 記録画面のカード」の表 workout_entry (id, session_id, exercise_id, sort_order = 実施した順) を追加。
+--   workout_set.entry_id NOT NULL ＋ (entry_id, exercise_id) の複合 FK、UNIQUE は (entry_id, set_index)。routine_exercise の PK は (routine_id, sort_order)（同じ種目を 2 行）。
+--   正の定義は supabase/migrations/0010_workout_entry.sql、判断根拠は docs/gymwork-design-duplicate-and-reorder.md
 CREATE TABLE workout_set (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id   UUID NOT NULL REFERENCES workout_session (id) ON DELETE CASCADE,

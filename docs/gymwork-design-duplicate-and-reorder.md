@@ -1,6 +1,6 @@
 # 同じ種目を 2 回・記録画面での種目の並べ替え 設計（2026-10-04）
 
-状態: 設計案（本人決裁待ち。コード・DB は未変更）。親ドキュメントは `gymwork-alignment-design.md` 末尾「同じ種目を 2 回・記録画面での種目の並べ替え」。本ファイルがこの論点の SSOT。実装後は DDL を `domain-model.md`（v17）へ取り込み、ここには判断根拠だけ残す。
+状態: Q1〜Q4 本人決定済み・実装済み・0010 本番適用済み・commit/push/main マージ済み（2026-10-04）。実機確認は本人待ち。親ドキュメントは `gymwork-alignment-design.md` 末尾「同じ種目を 2 回・記録画面での種目の並べ替え」。本ファイルがこの論点の SSOT。実装後は DDL を `domain-model.md`（v17）へ取り込み、ここには判断根拠だけ残す。
 
 ## 0. 本人の要望・決定
 
@@ -272,7 +272,7 @@ a の細部: 前回の日に A が 2 entry・今日は 1 枚 → 1 枚目は前�
 - 記録先: 本ファイル §4 / `domain-model.md` v17（DDL）/ `gymwork-alignment-design.md` 末尾（決定の 1 行）
 - 他の選択肢: A 表示だけ（並びを残せない・ブロック分裂）/ B セットに枠の列（並びの置き場が別に要る）/ B' セッションに順序配列（制約で守れない）
 
-**本人回答（2026-10-04）: 「A」**（カードの表 `workout_entry` を足す。不採用: B セットに枠の列＝並びの置き場が別に要る／C 表示だけ＝並びを残せない）。migration は 0010、予定の旧列削除は 0011 へ繰り下げ
+**本人回答（2026-10-04）: 「A」**（カードの表 `workout_entry` を足す。不採用: B セットに枠の列＝並びの置き場が別に要る／C 表示だけ＝並びを残せない）。migration は 0010、予定の旧列削除は 0011 へ繰り下げ（→ 10/7 にプロフィール/体重が 0011 を取り、旧列削除は 0012 へ）
 
 ### Q2. 2 枚目の A の「前回」列
 - 要点（推奨 a）: 現状は前回の日の A の全セットを先頭から対応 → 採用後は**前回の日の同じ順番の entry**（2 枚目 ↔ 前回の 2 回目）。無ければ「—」で、行は今日の A の最後のセットを写す
@@ -314,13 +314,13 @@ a の細部: 前回の日に A が 2 entry・今日は 1 枚 → 1 枚目は前�
 ## 12. 実装手順・移行手順（回帰防止）
 
 0. 着手前に `xcodebuild test … -only-testing:LifeTrackerTests` を実行し全件 pass を記録（ベースライン。睡眠側の追加テストが並行しているので件数は当日の値）
-1. migration を書く（番号: 今ある最大は `0009_sleep_record.sql`。`domain-model.md` 冒頭は 0010 を「task_template 旧列の削除」に予約している。0008 のときと同じく**この機能が 0010 を使い、旧列削除を 0011 に繰り下げる**案。親と睡眠側の作業に番号の衝突が無いことを確認してから確定）→ 使い捨て Postgres コンテナで ①新規適用 ②再適用（冪等）③既存データ風の seed（同じ種目 1 回の日・2 回に見える日）で entry の backfill と sort_order ④ `workout_set_delete` が entry 単位で詰め、空 entry を消し、sort_order を詰める ⑤ `workout_entry_reorder` が 1..n にし配列に無いものを後ろへ ⑥ 複合 FK が exercise_id の食い違いを拒む ⑦ `routine_exercise` に同じ exercise_id の 2 行が入り、同じ (routine_id, sort_order) は拒む ⑧ anon で両関数を実行できる ⑨ セットのあるセッションを DELETE したとき複合 FK (NO ACTION) が CASCADE を止めない（止めるなら ON DELETE CASCADE に変更）、を確認。migration は 1 トランザクションで適用する（MCP `apply_migration` の既存運用）
+1. migration を書く（番号: 今ある最大は `0009_sleep_record.sql`。`domain-model.md` 冒頭は 0010 を「task_template 旧列の削除」に予約している。0008 のときと同じく**この機能が 0010 を使い、旧列削除を 0011 に繰り下げる**案（10/7 現在は 0012）。親と睡眠側の作業に番号の衝突が無いことを確認してから確定）→ 使い捨て Postgres コンテナで ①新規適用 ②再適用（冪等）③既存データ風の seed（同じ種目 1 回の日・2 回に見える日）で entry の backfill と sort_order ④ `workout_set_delete` が entry 単位で詰め、空 entry を消し、sort_order を詰める ⑤ `workout_entry_reorder` が 1..n にし配列に無いものを後ろへ ⑥ 複合 FK が exercise_id の食い違いを拒む ⑦ `routine_exercise` に同じ exercise_id の 2 行が入り、同じ (routine_id, sort_order) は拒む ⑧ anon で両関数を実行できる ⑨ セットのあるセッションを DELETE したとき複合 FK (NO ACTION) が CASCADE を止めない（止めるなら ON DELETE CASCADE に変更）、を確認。migration は 1 トランザクションで適用する（MCP `apply_migration` の既存運用）
 2. モデル・`WorkoutLogic`・Mock・テスト（UI なし）
 3. `WorkoutSessionStore`（カード化・entry 作成・差し込み・並べ替え・取り消し）＋テスト
 4. `WorkoutHistoryStore`（entries）＋テスト
 5. プログラム側（store・編集・確認シート・ピッカー）＋テスト
 6. 画面（`TodayExerciseCard` 切り出し → カード id 配線 → ⋮ → 並べ替えシート → 過去日 → 履歴の「｜」）→ モック（`-mock-workout`）で §13 のスクリーンショット
-7. docs: `domain-model.md` v17（DDL・0010/0011 の番号）、`gymwork-alignment-design.md` 末尾に決定と本ファイルへのリンク、`implementation-roadmap.md` Round 4（過去日編集は entry 前提）
+7. docs: `domain-model.md` v17（DDL・0010/0011 の番号。10/7 に旧列削除は 0012 へ）、`gymwork-alignment-design.md` 末尾に決定と本ファイルへのリンク、`implementation-roadmap.md` Round 4（過去日編集は entry 前提）
 8. **本番適用の順序（本人）**: 0010 を MCP で適用 → すぐ新ビルドを実機に入れる。適用〜導入の間は旧ビルドで記録できない（読み取りは可）。適用後に MCP（読み取り）で entry が (session, exercise) ごとに 1 行・sort_order が 1..n・`workout_set.entry_id` に NULL が無いことを確認
 
 ## 13. 完了条件（機械チェック）
@@ -367,7 +367,7 @@ a の細部: 前回の日に A が 2 entry・今日は 1 枚 → 1 枚目は前�
 | 変更 | `LifeTrackerTests/WorkoutHistoryStoreTests.swift` | `duplicateRejected` を「2 枚目になる」に反転、entries の取得 | ±25 |
 | 変更 | `LifeTrackerTests/ProgramStoreTests.swift` | `edit` の「重複をまとめる」を「重複を保つ」に反転 | ±10 |
 | 追加テスト | 同上 3 ファイル＋`WorkoutSummaryTests` | nextSetIndex/renumber が entry 単位・groupByEntry の順・同じ種目 2 枚・最初の ✓ で entry と差し込み・load が sort_order 順・取り消しの戻し先・最後のセット削除で entry が消えカードが残る・前回の対応と fallback・今日にある種目への入れ替え・moveCard の書き込み有無・書き込みの直列化・Mock の reorder/空 entry 削除/重複 routine・件数判定・history の entries・デコード（entry_id）・種目数は種類数 | ≥ 18 件 |
-| 変更 | `docs/domain-model.md` | v17: `workout_entry`、`workout_set` の列と UNIQUE、`routine_exercise` PK、冒頭の番号予約（0010 → 0011） | — |
+| 変更 | `docs/domain-model.md` | v17: `workout_entry`、`workout_set` の列と UNIQUE、`routine_exercise` PK、冒頭の番号予約（0010 → 0011。10/7 に → 0012） | — |
 | 変更 | `docs/gymwork-alignment-design.md` / `implementation-roadmap.md` | 末尾に決定と本ファイルへのリンク / Round 4 の前提 | — |
 | 不変 | `SetRows.swift` / `ProgressChartView.swift` / `WeekAnalysisView.swift` / `ContinuityViews.swift` / `Shared/*` / `RestTimerWidget/*` / `Views/Home` / `Views/Sleep` / `SleepRules.swift` | 触らない（§13 の diff で担保） | — |
 

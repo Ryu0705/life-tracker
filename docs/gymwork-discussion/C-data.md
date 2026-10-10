@@ -105,6 +105,8 @@
 - リスク: セッションメモの「セッション未作成」問題、日×種目メモは Mock/テスト・SSOT 更新の手数
 
 ### (h) 体重記録
+
+> 2026-10-07 本人決定: アプリで手入力・日付つきで DB（`user_profile`・`body_weight_record`、migration 0011 予定）。`body-strength-and-heatmap-period.md`
 - 既存データ: **無い**。migration 要
 - 置き場の選択肢:
   1. 新テーブル `body_measurement(date DATE PK /*JST 暦日*/, weight_kg NUMERIC(5,2) CHECK > 0, body_fat_pct NUMERIC(4,1) NULL, measured_at TIMESTAMPTZ)` — day 単位の独立属性として day_meta と同格。1 日 1 件（上書き）。DataSource は workout とは別 protocol か WorkoutDataSource に同居か要決定（独立アグリゲートなので別が筋）

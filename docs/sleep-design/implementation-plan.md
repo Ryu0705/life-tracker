@@ -36,7 +36,7 @@
 - Swift: `xcodebuild test` 全件成功（件数を記録）。grep: 睡眠のコードに `Calendar.current` なし、`SleepActualSection`・`sleep_actual_input`・`sleepScore`・「昼寝」がアプリに無い、`Continuity.swift`/`StreakViews.swift`/`StreakWidget.swift` に差分なし
 - シミュレータ（`-mock-day`）: synthesis §6-3 から目覚めの項目を除き、種別の切り替え（仮眠 → 今−30 分〜今、保存すると仮眠の行、夜の平均に入らない）を足したもの
 
-## 結果（2026-10-03 実装済み・未 commit・本番未適用）
+## 結果（2026-10-03 実装。10/4 に本番適用・commit・main マージ済み）
 - SQL（事実・使い捨て Postgres 16.14 を docker で）: 0001→0005 → seed → 0006 → 新 0007 ×2 → 0008 → 0009 ×2 がエラー 0 件。`checkin_set` 8 引数 1 本、`checkin_set`/`actual_save` が睡眠を拒否・ジムは通る、`sleep_record` の時刻・24h・kind・重なり（23P01）の拒否、端がくっつく 2 件・nap・kind 省略 = sleep は通る、`sleep_actual_input` の砦、`schedule_*` 8 種の前後で `sleep_record` 不変。記録は scratchpad `sleep/verify_sleep_v2.*`。seed は 0006 より前に入れる必要がある（後だと休日パターンが UNIQUE でぶつかる）
 - Swift: 単体テスト 196 件成功（親が実行）。grep で「昼寝」・`sleepScore`・`sleep_actual_input`・`SleepActualSection` が 0 件。`Continuity.swift`/`StreakViews.swift`/`StreakWidget.swift` 差分なし。`project.pbxproj` は Xcode が空の `exceptions` を消しただけ
 - シミュレータ（`-mock-day`・親が確認）: 今朝のカード（予定 23:00＋今）→ 記録する → 行になる／シートの先頭に「通常の睡眠｜仮眠」、時刻を押すと 5 分刻みのホイール／就寝を 0:00 に直して保存 → 予定タブの前日継続の行に「実績 0:00–14:55」（M-1）／前日を見たまま睡眠タブで削除（スワイプ → 確認「睡眠の記録を消しますか？」）→ 予定タブに戻ると実績が消え（V-7）、睡眠タブは「未入力［記録］」／過去日の睡眠の行は押せない（シェブロンなし）／仮眠 13:10–13:40 は予定タブに出ない／＋ → 仮眠に切り替え → 既定 今−30 分〜今、重なりは「この時間には記録があります」／推移（週・数字 1 行・範囲バー・棒）

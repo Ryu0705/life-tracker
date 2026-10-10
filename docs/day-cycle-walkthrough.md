@@ -157,7 +157,7 @@ CREATE TABLE pattern_version_membership (
   - 休日パターン（apply_day = Holiday）が無ければ作る。アプリ側で後から作る処理（`ensureHolidayPattern`）はやめる（DB §1-8）
   - RPC（plpgsql、1 呼び出し = 1 トランザクション。関数の先頭で `p_date >= (now() AT TIME ZONE 'Asia/Tokyo')::date` を検査し、違えば例外）: 系列の新規作成・「これ以降」保存・「これ以降」削除・「この予定」保存・「この予定」削除・単発↔系列の変換。DDL 案は `day-cycle-review-2026-09-30-db.md` §4
   - 過去を守るトリガーは入れない（本人決定 3。必要になったら 1 本足す）
-- **0011（後日・本人 OK 後。段階 2 で 0007、トレーニングで 0008・0010、睡眠で 0009 を使ったため繰り下げ）**: 新しいビルドで確認できてから `task_template` の中身の列と `pattern_template_membership` を削除
+- **0012（後日・本人 OK 後。段階 2 で 0007、トレーニングで 0008・0010、睡眠で 0009、プロフィール/体重で 0011（10/7）を使ったため繰り下げ）**: 新しいビルドで確認できてから `task_template` の中身の列と `pattern_template_membership` を削除
 
 ### 組み立て
 - pure 関数 1 つ（例 `TemplateVersions.resolve(date:)`）で「その日に効く世代」を選び、TaskTemplate（id = 系列）と membership に直す。is_ended の世代は何も出さない。DayBuilder には当日分と前日分を別に渡す（DB §3-2）。既存の DayBuilder テストは無変更で通す
@@ -193,7 +193,7 @@ CREATE TABLE pattern_version_membership (
 - [x] resolve と操作規則の単体テスト（上の表の全行、前日 O の既存バグ、日をまたぐ睡眠、祝日、単発↔系列）— `ScheduleStage1Tests.swift` 38 件。単体テスト全体 143 件成功（2026-09-30）
 - [x] モックでシミュレータ確認（全操作・週帯の移動・過去日が押せない）— 2026-09-30 `-mock-day`。下の実装メモの「シミュレータで確かめたこと」
 - [x] migration 0006 を本番適用（2026-09-30 本人 OK。MCP apply_migration `v2_template_version`。関数の本体が DB と一致することを pg_proc で確認）。第 1 世代 2 件（睡眠＝祝日の登録あり・ジム）が入った。アプリと同じ REST 経由で `schedule_template_create`（10/5 の試験系列）→ 過去日 9/29 への `schedule_occurrence_delete` は「past day is not editable」で拒否 → `schedule_template_delete_following` で系列ごと削除、を確認。試験データは残っていない。本番 DB につないだアプリで予定の表示も確認
-- [ ] 0011（旧列・pattern_template_membership の削除。旧 0007 → 0008 → 0010 → 0011）は、本人の実機で新しいビルドの読み書きを確かめてから（本人 OK 待ち）
+- [ ] 0012（旧列・pattern_template_membership の削除。旧 0007 → 0008 → 0010 → 0011 → 0012）は、本人の実機で新しいビルドの読み書きを確かめてから（本人 OK 待ち）
 - [ ] 実機確認は本人
 
 ## 段階 1 実装メモ（AI の判断。2026-09-30。本人未確認・違えば直す）
@@ -223,7 +223,7 @@ CREATE TABLE pattern_version_membership (
 - **SQL の確認**: 本番ではなく、手元の使い捨て Postgres 16（docker `postgres:16-alpine`）に 0001・0002・0006 を流し、backfill の再実行で 0 行・過去日の拒否・「この予定」保存の書き換え・「これ以降」保存（D より後の O は残る、同じ日の書き換えで世代の id を保つ）・「これ以降」削除（終了の世代／系列ごと）・単発 ↔ 系列・日をまたぐ単発の時刻を確かめた。**PostgREST 経由の呼び出し（引数名の一致）は本番適用後に確かめる**（引数の JSON は単体テストで確認済み）
 
 ### 判断した点
-- **新しい系列を作るときの `task_template` の旧列**: 0006 では旧列が NOT NULL のまま残るので、RPC は第 1 世代の中身で埋める（旧ビルド向けの写し。以後は更新しない＝旧ビルドで見ると古い中身のまま）。0011 で列ごと消す（旧称 0007・0008・0010）
+- **新しい系列を作るときの `task_template` の旧列**: 0006 では旧列が NOT NULL のまま残るので、RPC は第 1 世代の中身で埋める（旧ビルド向けの写し。以後は更新しない＝旧ビルドで見ると古い中身のまま）。0012 で列ごと消す（旧称 0007・0008・0010・0011）
 - **単発の書き込みも RPC にした**（`schedule_single_save` / `_delete`）。「D ≥ 今日」の検査を 1 か所に揃えるため。単発の日付は編集で変えない（D 固定）
 - **祝日だけ（曜日なし・祝日も出す）も繰り返し（系列）**。曜日も祝日もなし = 繰り返さない（単発）。RPC とモックは曜日も祝日もない系列を作らせない（例外）
 - **繰り返しの設定の変更の判定**: 曜日か祝日のどちらかが開いた時点と違えば、中身も変えていても確認なしで「これ以降」（footer「これ以降のすべての予定が変わります」）
@@ -255,7 +255,7 @@ CREATE TABLE pattern_version_membership (
 
 ### 未実装・既知の問題
 - migration 0006 は未適用。適用後に実 DB で RPC を 1 通り試す（完了条件のとおり）。Supabase は DDL 後に PostgREST のスキーマキャッシュを読み直すはずだが、関数が見つからないエラーが出たら `NOTIFY pgrst, 'reload schema'`
-- 0011（旧列と `pattern_template_membership` の削除。旧称 0007・0008・0010）は未作成
+- 0012（旧列と `pattern_template_membership` の削除。旧称 0007・0008・0010・0011）は未作成
 - `domain-model.md` への反映（第 1 世代の日付が近似であること、休日パターンは常に存在させること。レビュー DB §1-7・§1-8）はしていない
 - UI U-14（新規の既定値）・U-18（いつもの設定に戻す）は入れていない
 - 実機確認は本人
@@ -290,7 +290,7 @@ CREATE TABLE pattern_version_membership (
 - 論点はすべて決定（C1〜C6）。下の「段階 2 確定仕様」に従って実装する
 
 ## 段階 2 確定仕様（2026-09-30。C1〜C6 の本人決定＋AI の詰め。AI の詰めは本人未確認・違えば直す）
-### DB（migration `0007_actual_checkin.sql`。旧列の削除は 0011 に繰り下げ）
+### DB（migration `0007_actual_checkin.sql`。旧列の削除は 0012 に繰り下げ・10/7）
 ```sql
 ALTER TABLE actual_task
   ADD COLUMN status TEXT NOT NULL DEFAULT 'done' CHECK (status IN ('done','skipped')),
@@ -343,7 +343,7 @@ ALTER TABLE sleep_actual_input ADD CONSTRAINT sleep_score_range CHECK (sleep_sco
 - どの夜か: 保存せず表示時に計算（就寝 − 12h の JST 日。見出しは +1 日の「10/2(金) の朝」）。仮眠は開始の日。通常の睡眠／仮眠は本人が選ぶ（10/3 変更。旧: 就寝 18:00〜翌 6:00 が夜・それ以外は昼寝）
 - 予定タブ: 睡眠の行は時刻が最も長く重なる記録を「実績 23:40–7:10（7時間30分）」と出すだけ。未入力は出さない。丸・スキップなし
 - 睡眠タブ（3 つ目のタブ）: 今週の 1 行＋今朝のカード（予定の就寝＋今で埋まり［記録する］。10/3 変更）＋直近 7 朝（未入力の行つき）＋すべての記録＋推移（範囲バー・睡眠時間）
-- 0007 から睡眠の分岐を抜き、checkin_set / actual_save で睡眠の種類を拒否。0009 = sleep_record ＋旧 sleep_actual_input の DROP（行があれば止まる砦つき。10/3 に 0008 から繰り下げ）。段階 1 の旧列削除は **0011** に繰り下げ（10/4 にトレーニングの workout_entry が 0010 を使用）
+- 0007 から睡眠の分岐を抜き、checkin_set / actual_save で睡眠の種類を拒否。0009 = sleep_record ＋旧 sleep_actual_input の DROP（行があれば止まる砦つき。10/3 に 0008 から繰り下げ）。段階 1 の旧列削除は **0012** に繰り下げ（10/7 にプロフィール/体重が 0011 を使用。10/4 にトレーニングの workout_entry が 0010 を使用）
 - 本人決定（2026-10-02、synthesis §5）:
   - Q1「B スワイプにも確認」: 直す＝一覧の行 → 半画面シート。消す＝シートの「記録を消す」・一覧の左スワイプ「削除」とも確認あり（9/30 の保留「睡眠記録の削除、修正」はこれで決着）
   - Q2「A 記録する（推奨）」: 昼寝も同じ表に、睡眠タブの ＋ から。種類は選ばず時刻で分類し、夜の平均に入れない（→ 10/3 に種別 kind を本人が選ぶ形へ変更。下の「本人決定（2026-10-03）」）
