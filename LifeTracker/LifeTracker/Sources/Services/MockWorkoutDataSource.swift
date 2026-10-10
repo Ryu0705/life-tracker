@@ -23,9 +23,20 @@ final class MockWorkoutDataSource: WorkoutDataSource {
     private(set) var sets: [WorkoutSet]
     private(set) var entries: [WorkoutEntry]
     private(set) var weeklyGoals: [WeeklyGoal] = []
+    var profile: UserProfile?
+    var bodyWeights: [BodyWeightRecord] = []
+    /// テスト用の失敗注入: 次の saveBodyWeight を失敗させる (初回入力の 2 本目の失敗の再現)
+    var failNextBodyWeightSave = false
 
     /// テスト用の失敗注入: addSet の応答を遅らせる (二度押しの再現)
     var addSetDelayNanoseconds: UInt64 = 0
+    /// シミュレータ確認用: fetchSets(completedFrom:to:) の応答を遅らせる (分析のページ切替中の取得の再現)
+    var fetchSetsDelayNanoseconds: UInt64 = 0
+    /// テスト用: true の間 fetchSets(completedFrom:to:) の応答を止める (releaseFetchSets で返す)
+    var holdsFetchSets = false
+    private var fetchSetsWaiters: [CheckedContinuation<Void, Never>] = []
+    /// テスト用の失敗注入: 次の fetchSets(completedFrom:to:) を失敗させる
+    var failNextFetchSets = false
     /// テスト用: fetchSets(completedFrom:to:) の呼び出し回数 (履歴 store のキャッシュ確認)
     private(set) var fetchRangeCallCount = 0
     /// テスト用の失敗注入: 次の addSet は INSERT した後に応答だけ失う (回線断の再現)
@@ -226,8 +237,23 @@ final class MockWorkoutDataSource: WorkoutDataSource {
         Set(sets.map(\.exerciseId))
     }
 
+    /// 止めている fetchSets(completedFrom:to:) の数
+    var pendingFetchSets: Int { fetchSetsWaiters.count }
+
+    func releaseFetchSets() {
+        let released = fetchSetsWaiters
+        fetchSetsWaiters = []
+        released.forEach { $0.resume() }
+    }
+
     func fetchSets(completedFrom from: Date, to: Date) async throws -> [WorkoutSet] {
         fetchRangeCallCount += 1
+        if holdsFetchSets { await withCheckedContinuation { fetchSetsWaiters.append($0) } }
+        if fetchSetsDelayNanoseconds > 0 { try await Task.sleep(nanoseconds: fetchSetsDelayNanoseconds) }
+        if failNextFetchSets {
+            failNextFetchSets = false
+            throw MockError.notFound
+        }
         return sets
             .filter { $0.completedAt.map { from <= $0 && $0 < to } ?? false }
             .sorted { ($0.completedAt!, $0.setIndex) < ($1.completedAt!, $1.setIndex) }
@@ -245,5 +271,26 @@ final class MockWorkoutDataSource: WorkoutDataSource {
     func saveWeeklyGoal(_ goal: WeeklyGoal) async throws {
         weeklyGoals.removeAll { $0.effectiveFrom == goal.effectiveFrom }
         weeklyGoals.append(goal)
+    }
+
+    func fetchProfile() async throws -> UserProfile? {
+        profile
+    }
+
+    func saveProfile(_ profile: UserProfile) async throws {
+        self.profile = profile
+    }
+
+    func fetchBodyWeights() async throws -> [BodyWeightRecord] {
+        bodyWeights.sorted { $0.recordedOn < $1.recordedOn }
+    }
+
+    func saveBodyWeight(_ record: BodyWeightRecord) async throws {
+        if failNextBodyWeightSave {
+            failNextBodyWeightSave = false
+            throw MockError.notFound
+        }
+        bodyWeights.removeAll { $0.recordedOn == record.recordedOn }
+        bodyWeights.append(record)
     }
 }

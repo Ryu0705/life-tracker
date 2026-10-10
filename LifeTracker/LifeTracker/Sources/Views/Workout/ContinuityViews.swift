@@ -105,15 +105,17 @@ struct WeeklyGoalSheet: View {
 struct TrainingHeatmap: View {
     /// 日 → ボリューム (記録はあるがボリュームが出ない種目だけの日は 0 より大きい最小値で渡す)
     let volumes: [Date: Double]
+    /// windowThresholds で出した閾値 (1 か月・半年で同じものを渡し、切り替えても同じ日の色を変えない)
+    let thresholds: [Double]
+    /// 色の基準の 26 週が読めているか。false の間は塗らずに枠だけ出す (読めた週だけの閾値で塗ってから色が変わるのを防ぐ)
+    let isLoaded: Bool
     let today: Date
     let calendar: Calendar
 
     static let weekCount = 26
 
     var body: some View {
-        let currentWeek = Continuity.weekStart(containing: today, calendar: calendar)
-        let weeks = (0..<Self.weekCount).reversed().map { calendar.date(byAdding: .day, value: -7 * $0, to: currentWeek)! }
-        let thresholds = Self.thresholds(Array(volumes.values))
+        let weeks = Self.windowWeekStarts(today: today, calendar: calendar)
         VStack(alignment: .leading, spacing: 4) {
             GeometryReader { geo in
                 let gap: CGFloat = 2
@@ -124,7 +126,10 @@ struct TrainingHeatmap: View {
                             ForEach(0..<7, id: \.self) { offset in
                                 let day = calendar.date(byAdding: .day, value: offset, to: week)!
                                 RoundedRectangle(cornerRadius: 2)
-                                    .fill(day > today ? Color.clear : Self.color(level: Self.level(volumes[day], thresholds: thresholds)))
+                                    .fill(day > today || !isLoaded ? Color.clear : Self.color(level: Self.level(volumes[day], thresholds: thresholds)))
+                                    .overlay {
+                                        if !isLoaded && day <= today { Self.unloadedCell(cornerRadius: 2) }
+                                    }
                                     .frame(width: cell, height: cell)
                             }
                         }
@@ -145,7 +150,24 @@ struct TrainingHeatmap: View {
             .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("直近\(Self.weekCount)週のトレーニング \(volumes.keys.filter { $0 <= today }.count)日")
+        .accessibilityLabel(isLoaded ? "直近\(Self.weekCount)週のトレーニング \(volumes.keys.filter { $0 <= today }.count)日" : "直近\(Self.weekCount)週のトレーニング 読み込み中")
+    }
+
+    /// 色の基準の窓 = 今週を含む直近 26 週の週頭 (月曜)。古い順
+    static func windowWeekStarts(today: Date, calendar: Calendar) -> [Date] {
+        let currentWeek = Continuity.weekStart(containing: today, calendar: calendar)
+        return (0..<weekCount).reversed().map { calendar.date(byAdding: .day, value: -7 * $0, to: currentWeek)! }
+    }
+
+    /// 読み込み中のセル: 塗らない枠だけ (記録なしの色とも区別する。草・1 か月で共通)
+    static func unloadedCell(cornerRadius: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: cornerRadius).stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+    }
+
+    /// 色の閾値は今日から 26 週の窓の記録だけで出す (週ナビで古い週を読んでも色が動かない。レビュー A-11)
+    static func windowThresholds(volumes: [Date: Double], today: Date, calendar: Calendar) -> [Double] {
+        let first = windowWeekStarts(today: today, calendar: calendar)[0]
+        return thresholds(volumes.filter { $0.key >= first && $0.key <= today }.map(\.value))
     }
 
     /// 記録がある日のボリュームの 4 分位 (25/50/75%)。日ごとの差を相対的に見せる

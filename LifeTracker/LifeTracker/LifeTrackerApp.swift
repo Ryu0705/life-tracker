@@ -73,7 +73,10 @@ struct LifeTrackerApp: App {
             var sleep: SleepDataSource = dataSource
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-mock-workout") {
-                workout = WorkoutFixtures.makeMockDataSource()
+                let mock = WorkoutFixtures.makeMockDataSource(withProfile: !ProcessInfo.processInfo.arguments.contains("-mock-no-profile"))
+                // 期間の取得を 1.5 秒遅らせる (分析のページ切替中の取得の確認用)
+                if ProcessInfo.processInfo.arguments.contains("-mock-fetch-delay") { mock.fetchSetsDelayNanoseconds = 1_500_000_000 }
+                workout = mock
             }
             // 予定側もメモリ上にする (シミュレータ確認で本番 DB に書かない)。
             // 今日の前後に「その日だけ変えた回」「除外日」「単発」を 1 つずつ入れる

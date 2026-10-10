@@ -262,6 +262,35 @@ final class SupabaseWorkoutDataSource: WorkoutDataSource {
             .execute()
     }
 
+    func fetchProfile() async throws -> UserProfile? {
+        let rows: [UserProfile] = try await client.from("user_profile")
+            .select("sex, birth_date")
+            .limit(1)
+            .execute()
+            .value
+        return rows.first
+    }
+
+    func saveProfile(_ profile: UserProfile) async throws {
+        try await client.from("user_profile")
+            .upsert(ProfileRow(id: 1, sex: profile.sex, birthDate: profile.birthDate), onConflict: "id")
+            .execute()
+    }
+
+    func fetchBodyWeights() async throws -> [BodyWeightRecord] {
+        try await fetchAllPages {
+            client.from("body_weight_record")
+                .select("recorded_on, weight_kg")
+                .order("recorded_on")
+        }
+    }
+
+    func saveBodyWeight(_ record: BodyWeightRecord) async throws {
+        try await client.from("body_weight_record")
+            .upsert(record, onConflict: "recorded_on")
+            .execute()
+    }
+
     /// PostgREST の max-rows (1000) を越えた分はエラーにならず黙って切られるため、件数が pageSize 未満になるまで
     /// .range で取り直す。ページ間で行がずれないよう、query は一意なキー (id) まで order を付けること。
     /// builder は range で自身を書き換えるので、ページごとに query を作り直す
@@ -290,6 +319,12 @@ private struct TrainingDayRow: Decodable {
 private struct WeeklyGoalRow: Codable {
     let weeklyTarget: Int
     @DateOnly var effectiveFrom: Date
+}
+
+private struct ProfileRow: Encodable {
+    let id: Int
+    let sex: Sex
+    @DateOnly var birthDate: Date
 }
 
 private struct ExerciseIdRow: Decodable {

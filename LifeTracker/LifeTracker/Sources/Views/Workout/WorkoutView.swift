@@ -10,6 +10,7 @@ struct WorkoutView: View {
     @StateObject private var programStore: ProgramStore
     /// 継続 (週 N 回基準の連続日数・今週のリング)。ウィジェットへの受け渡しもここから
     @StateObject private var continuity: ContinuityStore
+    @StateObject private var profileStore: ProfileStore
     @State private var isEditingGoal = false
     @State private var path = NavigationPath()
     @State private var picker: PickerRequest?
@@ -74,6 +75,7 @@ struct WorkoutView: View {
         _historyStore = StateObject(wrappedValue: WorkoutHistoryStore(dataSource: dataSource, calendar: calendar))
         _programStore = StateObject(wrappedValue: ProgramStore(dataSource: dataSource))
         _continuity = StateObject(wrappedValue: ContinuityStore(dataSource: dataSource, calendar: calendar))
+        _profileStore = StateObject(wrappedValue: ProfileStore(dataSource: dataSource, calendar: calendar))
     }
 
     var body: some View {
@@ -95,7 +97,7 @@ struct WorkoutView: View {
                     }
                 }
                 .navigationDestination(for: AnalysisRoute.self) { _ in
-                    WeekAnalysisView(store: store, historyStore: historyStore, continuity: continuity, calendar: calendar)
+                    AnalysisView(store: store, historyStore: historyStore, continuity: continuity, profileStore: profileStore, calendar: calendar)
                 }
                 .navigationDestination(for: ProgramsRoute.self) { _ in
                     ProgramListView(programStore: programStore, exercises: store.exercises)

@@ -1,0 +1,1199 @@
+{
+ "note": "生成物 (docs/strength-standards/build_mapping.py)。手で直さない。個人用アプリの中だけで使い、公開・再配布しない",
+ "exercises": [
+  {
+   "name": "ベンチプレス",
+   "muscle_group": "chest",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "bench-press"
+  },
+  {
+   "name": "インクラインベンチプレス",
+   "muscle_group": "chest",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "incline-bench-press"
+  },
+  {
+   "name": "デクラインベンチプレス",
+   "muscle_group": "chest",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "decline-bench-press"
+  },
+  {
+   "name": "スミスマシンベンチプレス",
+   "muscle_group": "chest",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "smith-machine-bench-press"
+  },
+  {
+   "name": "ダンベルプレス",
+   "muscle_group": "chest",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-bench-press"
+  },
+  {
+   "name": "インクラインダンベルプレス",
+   "muscle_group": "chest",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "incline-dumbbell-bench-press"
+  },
+  {
+   "name": "デクラインダンベルプレス",
+   "muscle_group": "chest",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "decline-dumbbell-bench-press"
+  },
+  {
+   "name": "ダンベルフライ",
+   "muscle_group": "chest",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-fly"
+  },
+  {
+   "name": "インクラインダンベルフライ",
+   "muscle_group": "chest",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "incline-dumbbell-fly"
+  },
+  {
+   "name": "チェストプレス（マシン）",
+   "muscle_group": "chest",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "chest-press"
+  },
+  {
+   "name": "インクラインチェストプレス（マシン）",
+   "muscle_group": "chest",
+   "metric_kind": "weight_reps",
+   "match": "approx",
+   "slug": "chest-press",
+   "label": "近似（chest-press × incline-bench-press/bench-press の比）",
+   "multiplier": {
+    "ratio_of": [
+     "incline-bench-press",
+     "bench-press"
+    ]
+   }
+  },
+  {
+   "name": "ペックフライ（マシン）",
+   "muscle_group": "chest",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "machine-chest-fly"
+  },
+  {
+   "name": "ケーブルクロスオーバー",
+   "muscle_group": "chest",
+   "metric_kind": "weight_reps",
+   "match": "approx",
+   "slug": "cable-fly",
+   "label": "近似（cable-fly で代用）"
+  },
+  {
+   "name": "ローケーブルフライ",
+   "muscle_group": "chest",
+   "metric_kind": "weight_reps",
+   "match": "approx",
+   "slug": "cable-fly",
+   "label": "近似（cable-fly で代用）"
+  },
+  {
+   "name": "ディップス（胸）",
+   "muscle_group": "chest",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dips",
+   "transform": "bodyweight_added"
+  },
+  {
+   "name": "ダンベルプルオーバー",
+   "muscle_group": "chest",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-pullover"
+  },
+  {
+   "name": "プッシュアップ",
+   "muscle_group": "chest",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "push-ups"
+  },
+  {
+   "name": "ワイドプッシュアップ",
+   "muscle_group": "chest",
+   "metric_kind": "reps_only",
+   "match": "approx",
+   "slug": "push-ups",
+   "label": "近似（push-ups で代用）"
+  },
+  {
+   "name": "デクラインプッシュアップ",
+   "muscle_group": "chest",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "decline-push-up"
+  },
+  {
+   "name": "デッドリフト",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "deadlift"
+  },
+  {
+   "name": "ラックプル",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "rack-pull"
+  },
+  {
+   "name": "ベントオーバーロー",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "bent-over-row"
+  },
+  {
+   "name": "Tバーロー",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "t-bar-row"
+  },
+  {
+   "name": "ペンドレイロー",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "pendlay-row"
+  },
+  {
+   "name": "ワンハンドダンベルロー",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-row"
+  },
+  {
+   "name": "ダンベルベントオーバーロー",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "bent-over-dumbbell-row"
+  },
+  {
+   "name": "ラットプルダウン",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "lat-pulldown"
+  },
+  {
+   "name": "ラットプルダウン（パラレルグリップ）",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "approx",
+   "slug": "close-grip-lat-pulldown",
+   "label": "近似（close-grip-lat-pulldown で代用）"
+  },
+  {
+   "name": "ビハインドネックプルダウン",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "approx",
+   "slug": "lat-pulldown",
+   "label": "近似（lat-pulldown で代用）"
+  },
+  {
+   "name": "シーテッドロー（ケーブル）",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "seated-cable-row"
+  },
+  {
+   "name": "マシンロー",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "machine-row"
+  },
+  {
+   "name": "チンニング（順手懸垂）",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "pull-ups",
+   "transform": "bodyweight_added"
+  },
+  {
+   "name": "チンアップ（逆手懸垂）",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "chin-ups",
+   "transform": "bodyweight_added"
+  },
+  {
+   "name": "アシストチンニング（マシン）",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "derived",
+   "slug": "pull-ups",
+   "transform": "assist_to_added",
+   "label": "換算（pull-ups の加重の表・アシストはマイナス）"
+  },
+  {
+   "name": "ストレートアームプルダウン",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "straight-arm-pulldown"
+  },
+  {
+   "name": "ケーブルプルオーバー",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "approx",
+   "slug": "straight-arm-pulldown",
+   "label": "近似（straight-arm-pulldown で代用）"
+  },
+  {
+   "name": "ハイパーエクステンション（マシン）",
+   "muscle_group": "back",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "machine-back-extension"
+  },
+  {
+   "name": "インバーテッドロー（斜め懸垂）",
+   "muscle_group": "back",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "inverted-row"
+  },
+  {
+   "name": "バックエクステンション",
+   "muscle_group": "back",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "back-extension"
+  },
+  {
+   "name": "バーベルシュラッグ",
+   "muscle_group": "traps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "barbell-shrug"
+  },
+  {
+   "name": "ダンベルシュラッグ",
+   "muscle_group": "traps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-shrug"
+  },
+  {
+   "name": "スミスマシンシュラッグ",
+   "muscle_group": "traps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "smith-machine-shrug"
+  },
+  {
+   "name": "ケーブルシュラッグ",
+   "muscle_group": "traps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "cable-shrug"
+  },
+  {
+   "name": "アップライトロー",
+   "muscle_group": "traps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "upright-row"
+  },
+  {
+   "name": "ショルダープレス（バーベル）",
+   "muscle_group": "shoulders",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "shoulder-press"
+  },
+  {
+   "name": "ミリタリープレス",
+   "muscle_group": "shoulders",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "military-press"
+  },
+  {
+   "name": "ショルダープレス（ダンベル）",
+   "muscle_group": "shoulders",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-shoulder-press"
+  },
+  {
+   "name": "ショルダープレス（マシン）",
+   "muscle_group": "shoulders",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "machine-shoulder-press"
+  },
+  {
+   "name": "アーノルドプレス",
+   "muscle_group": "shoulders",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "arnold-press"
+  },
+  {
+   "name": "サイドレイズ",
+   "muscle_group": "shoulders",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-lateral-raise"
+  },
+  {
+   "name": "ケーブルサイドレイズ",
+   "muscle_group": "shoulders",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "cable-lateral-raise"
+  },
+  {
+   "name": "マシンサイドレイズ",
+   "muscle_group": "shoulders",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "machine-lateral-raise"
+  },
+  {
+   "name": "フロントレイズ",
+   "muscle_group": "shoulders",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-front-raise"
+  },
+  {
+   "name": "ケーブルフロントレイズ",
+   "muscle_group": "shoulders",
+   "metric_kind": "weight_reps",
+   "match": "approx",
+   "slug": "dumbbell-front-raise",
+   "label": "近似（dumbbell-front-raise × cable/dumbbell のレイズの比）",
+   "multiplier": {
+    "ratio_of": [
+     "cable-lateral-raise",
+     "dumbbell-lateral-raise"
+    ]
+   }
+  },
+  {
+   "name": "リアレイズ",
+   "muscle_group": "shoulders",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-reverse-fly"
+  },
+  {
+   "name": "リアデルトフライ（マシン）",
+   "muscle_group": "shoulders",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "machine-reverse-fly"
+  },
+  {
+   "name": "フェイスプル",
+   "muscle_group": "shoulders",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "face-pull"
+  },
+  {
+   "name": "パイクプッシュアップ",
+   "muscle_group": "shoulders",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "pike-push-up"
+  },
+  {
+   "name": "バンドプルアパート",
+   "muscle_group": "shoulders",
+   "metric_kind": "reps_only",
+   "match": "excluded"
+  },
+  {
+   "name": "バーベルカール",
+   "muscle_group": "biceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "barbell-curl"
+  },
+  {
+   "name": "EZバーカール",
+   "muscle_group": "biceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "ez-bar-curl"
+  },
+  {
+   "name": "ドラッグカール",
+   "muscle_group": "biceps",
+   "metric_kind": "weight_reps",
+   "match": "approx",
+   "slug": "barbell-curl",
+   "label": "近似（barbell-curl で代用）"
+  },
+  {
+   "name": "ダンベルカール",
+   "muscle_group": "biceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-curl"
+  },
+  {
+   "name": "ハンマーカール",
+   "muscle_group": "biceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "hammer-curl"
+  },
+  {
+   "name": "インクラインダンベルカール",
+   "muscle_group": "biceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "incline-dumbbell-curl"
+  },
+  {
+   "name": "コンセントレーションカール",
+   "muscle_group": "biceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-concentration-curl"
+  },
+  {
+   "name": "スパイダーカール",
+   "muscle_group": "biceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "spider-curl"
+  },
+  {
+   "name": "プリーチャーカール（マシン）",
+   "muscle_group": "biceps",
+   "metric_kind": "weight_reps",
+   "match": "approx",
+   "slug": "machine-bicep-curl",
+   "label": "近似（machine-bicep-curl で代用）"
+  },
+  {
+   "name": "ケーブルカール",
+   "muscle_group": "biceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "cable-bicep-curl"
+  },
+  {
+   "name": "トライセプスプレスダウン",
+   "muscle_group": "triceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "tricep-pushdown"
+  },
+  {
+   "name": "ロープトライセプスプレスダウン",
+   "muscle_group": "triceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "tricep-rope-pushdown"
+  },
+  {
+   "name": "ケーブルオーバーヘッドエクステンション",
+   "muscle_group": "triceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "cable-overhead-tricep-extension"
+  },
+  {
+   "name": "ライイングトライセプスエクステンション",
+   "muscle_group": "triceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "lying-tricep-extension"
+  },
+  {
+   "name": "ナローグリップベンチプレス",
+   "muscle_group": "triceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "close-grip-bench-press"
+  },
+  {
+   "name": "オーバーヘッドトライセプスエクステンション",
+   "muscle_group": "triceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-tricep-extension"
+  },
+  {
+   "name": "キックバック",
+   "muscle_group": "triceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-tricep-kickback"
+  },
+  {
+   "name": "トライセプスマシン",
+   "muscle_group": "triceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "machine-tricep-extension"
+  },
+  {
+   "name": "ディップス（三頭）",
+   "muscle_group": "triceps",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dips",
+   "transform": "bodyweight_added"
+  },
+  {
+   "name": "ベンチディップス",
+   "muscle_group": "triceps",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "bench-dips"
+  },
+  {
+   "name": "ナロープッシュアップ",
+   "muscle_group": "triceps",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "close-grip-push-up"
+  },
+  {
+   "name": "リストカール",
+   "muscle_group": "forearms",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-wrist-curl"
+  },
+  {
+   "name": "リバースリストカール",
+   "muscle_group": "forearms",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-reverse-wrist-curl"
+  },
+  {
+   "name": "リバースカール",
+   "muscle_group": "forearms",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "reverse-barbell-curl"
+  },
+  {
+   "name": "デッドハング",
+   "muscle_group": "forearms",
+   "metric_kind": "duration",
+   "match": "derived",
+   "slug": "plank",
+   "multiplier": {
+    "by_sex": {
+     "male": [
+      0.5,
+      0.5,
+      0.5,
+      0.667,
+      0.6
+     ],
+     "female": [
+      0.444,
+      0.444,
+      0.5,
+      0.643,
+      0.682
+     ]
+    }
+   },
+   "label": "換算（plank の表 × Endura の比）"
+  },
+  {
+   "name": "ハンドグリップ",
+   "muscle_group": "forearms",
+   "metric_kind": "reps_only",
+   "match": "excluded"
+  },
+  {
+   "name": "バーベルスクワット",
+   "muscle_group": "quads",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "squat"
+  },
+  {
+   "name": "フロントスクワット",
+   "muscle_group": "quads",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "front-squat"
+  },
+  {
+   "name": "スミスマシンスクワット",
+   "muscle_group": "quads",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "smith-machine-squat"
+  },
+  {
+   "name": "レッグプレス",
+   "muscle_group": "quads",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "sled-leg-press"
+  },
+  {
+   "name": "ハックスクワット",
+   "muscle_group": "quads",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "hack-squat"
+  },
+  {
+   "name": "レッグエクステンション",
+   "muscle_group": "quads",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "leg-extension"
+  },
+  {
+   "name": "ブルガリアンスクワット",
+   "muscle_group": "quads",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-bulgarian-split-squat"
+  },
+  {
+   "name": "ダンベルランジ",
+   "muscle_group": "quads",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-lunge"
+  },
+  {
+   "name": "ウォーキングランジ",
+   "muscle_group": "quads",
+   "metric_kind": "weight_reps",
+   "match": "approx",
+   "slug": "dumbbell-lunge",
+   "label": "近似（dumbbell-lunge で代用）"
+  },
+  {
+   "name": "ゴブレットスクワット",
+   "muscle_group": "quads",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "goblet-squat"
+  },
+  {
+   "name": "ステップアップ",
+   "muscle_group": "quads",
+   "metric_kind": "weight_reps",
+   "match": "derived",
+   "slug": "dumbbell-lunge",
+   "label": "換算（dumbbell-lunge の表）"
+  },
+  {
+   "name": "自重スクワット",
+   "muscle_group": "quads",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "bodyweight-squat"
+  },
+  {
+   "name": "シシースクワット",
+   "muscle_group": "quads",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "sissy-squat"
+  },
+  {
+   "name": "ジャンピングスクワット",
+   "muscle_group": "quads",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "squat-jump"
+  },
+  {
+   "name": "ウォールシット",
+   "muscle_group": "quads",
+   "metric_kind": "duration",
+   "match": "derived",
+   "slug": "plank",
+   "multiplier": {
+    "by_sex": {
+     "male": [
+      0.75,
+      0.75,
+      0.75,
+      0.833,
+      0.8
+     ],
+     "female": [
+      0.889,
+      0.889,
+      0.889,
+      0.929,
+      0.955
+     ]
+    }
+   },
+   "label": "換算（plank の表 × Endura の比）"
+  },
+  {
+   "name": "レッグカール（ライイング）",
+   "muscle_group": "hamstrings",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "lying-leg-curl"
+  },
+  {
+   "name": "レッグカール（シーテッド）",
+   "muscle_group": "hamstrings",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "seated-leg-curl"
+  },
+  {
+   "name": "ルーマニアンデッドリフト",
+   "muscle_group": "hamstrings",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "romanian-deadlift"
+  },
+  {
+   "name": "スティフレッグデッドリフト",
+   "muscle_group": "hamstrings",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "stiff-leg-deadlift"
+  },
+  {
+   "name": "グッドモーニング",
+   "muscle_group": "hamstrings",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "good-morning"
+  },
+  {
+   "name": "ダンベルルーマニアンデッドリフト",
+   "muscle_group": "hamstrings",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-romanian-deadlift"
+  },
+  {
+   "name": "ノルディックハムストリングカール",
+   "muscle_group": "hamstrings",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "nordic-hamstring-curl"
+  },
+  {
+   "name": "グルートハムレイズ",
+   "muscle_group": "hamstrings",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "glute-ham-raise"
+  },
+  {
+   "name": "ヒップスラスト",
+   "muscle_group": "glutes",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "hip-thrust"
+  },
+  {
+   "name": "ヒップスラスト（マシン）",
+   "muscle_group": "glutes",
+   "metric_kind": "weight_reps",
+   "match": "approx",
+   "slug": "hip-thrust",
+   "label": "近似（hip-thrust で代用）"
+  },
+  {
+   "name": "ヒップアブダクション（マシン）",
+   "muscle_group": "glutes",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "hip-abduction"
+  },
+  {
+   "name": "ヒップアダクション（マシン）",
+   "muscle_group": "glutes",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "hip-adduction"
+  },
+  {
+   "name": "バックキック（マシン）",
+   "muscle_group": "glutes",
+   "metric_kind": "weight_reps",
+   "match": "derived",
+   "slug": "cable-kickback",
+   "label": "換算（cable-kickback の表）"
+  },
+  {
+   "name": "ケーブルキックバック",
+   "muscle_group": "glutes",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "cable-kickback"
+  },
+  {
+   "name": "グルートブリッジ",
+   "muscle_group": "glutes",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "glute-bridge"
+  },
+  {
+   "name": "スタンディングカーフレイズ",
+   "muscle_group": "calves",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "machine-calf-raise"
+  },
+  {
+   "name": "シーテッドカーフレイズ",
+   "muscle_group": "calves",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "seated-calf-raise"
+  },
+  {
+   "name": "レッグプレスカーフレイズ",
+   "muscle_group": "calves",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "sled-press-calf-raise"
+  },
+  {
+   "name": "ダンベルカーフレイズ",
+   "muscle_group": "calves",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "dumbbell-calf-raise"
+  },
+  {
+   "name": "クランチ",
+   "muscle_group": "core",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "crunches"
+  },
+  {
+   "name": "シットアップ",
+   "muscle_group": "core",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "sit-ups"
+  },
+  {
+   "name": "バイシクルクランチ",
+   "muscle_group": "core",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "bicycle-crunch"
+  },
+  {
+   "name": "レッグレイズ",
+   "muscle_group": "core",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "lying-leg-raise"
+  },
+  {
+   "name": "ハンギングレッグレイズ",
+   "muscle_group": "core",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "hanging-leg-raise"
+  },
+  {
+   "name": "ハンギングニーレイズ",
+   "muscle_group": "core",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "hanging-knee-raise"
+  },
+  {
+   "name": "Vシット",
+   "muscle_group": "core",
+   "metric_kind": "reps_only",
+   "match": "derived",
+   "slug": "lying-leg-raise",
+   "label": "換算（lying-leg-raise の表）"
+  },
+  {
+   "name": "デッドバグ",
+   "muscle_group": "core",
+   "metric_kind": "reps_only",
+   "match": "derived",
+   "slug": "bicycle-crunch",
+   "label": "換算（bicycle-crunch の表）"
+  },
+  {
+   "name": "バードドッグ",
+   "muscle_group": "core",
+   "metric_kind": "reps_only",
+   "match": "derived",
+   "slug": "back-extension",
+   "label": "換算（back-extension の表）"
+  },
+  {
+   "name": "アブローラー",
+   "muscle_group": "core",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "ab-wheel-rollout"
+  },
+  {
+   "name": "プランク",
+   "muscle_group": "core",
+   "metric_kind": "duration",
+   "match": "exact",
+   "slug": "plank"
+  },
+  {
+   "name": "サイドプランク",
+   "muscle_group": "core",
+   "metric_kind": "duration",
+   "match": "exact",
+   "slug": "side-plank"
+  },
+  {
+   "name": "ホローホールド",
+   "muscle_group": "core",
+   "metric_kind": "duration",
+   "match": "derived",
+   "slug": "plank",
+   "multiplier": {
+    "by_sex": {
+     "male": [
+      0.5,
+      0.5,
+      0.5,
+      0.528,
+      0.467
+     ],
+     "female": [
+      0.556,
+      0.556,
+      0.556,
+      0.571,
+      0.545
+     ]
+    }
+   },
+   "label": "換算（plank の表 × Endura の比）"
+  },
+  {
+   "name": "マウンテンクライマー",
+   "muscle_group": "core",
+   "metric_kind": "duration",
+   "match": "excluded"
+  },
+  {
+   "name": "ロシアンツイスト",
+   "muscle_group": "core",
+   "metric_kind": "weight_reps",
+   "match": "derived",
+   "slug": "russian-twist",
+   "transform": "weighted_reps_equivalent",
+   "label": "換算（russian-twist の回数の表・加重は相当回数に）"
+  },
+  {
+   "name": "ケーブルクランチ",
+   "muscle_group": "core",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "cable-crunch"
+  },
+  {
+   "name": "アブドミナルクランチ（マシン）",
+   "muscle_group": "core",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "machine-seated-crunch"
+  },
+  {
+   "name": "トーソローテーション（マシン）",
+   "muscle_group": "core",
+   "metric_kind": "weight_reps",
+   "match": "derived",
+   "slug": "machine-seated-crunch",
+   "label": "換算（machine-seated-crunch の表）"
+  },
+  {
+   "name": "トレッドミル（ランニング）",
+   "muscle_group": "cardio",
+   "metric_kind": "duration_distance",
+   "match": "excluded"
+  },
+  {
+   "name": "トレッドミル（ウォーキング）",
+   "muscle_group": "cardio",
+   "metric_kind": "duration_distance",
+   "match": "excluded"
+  },
+  {
+   "name": "エアロバイク",
+   "muscle_group": "cardio",
+   "metric_kind": "duration_distance",
+   "match": "excluded"
+  },
+  {
+   "name": "リカンベントバイク",
+   "muscle_group": "cardio",
+   "metric_kind": "duration_distance",
+   "match": "excluded"
+  },
+  {
+   "name": "クロストレーナー",
+   "muscle_group": "cardio",
+   "metric_kind": "duration_distance",
+   "match": "excluded"
+  },
+  {
+   "name": "ローイングマシン",
+   "muscle_group": "cardio",
+   "metric_kind": "duration_distance",
+   "match": "excluded"
+  },
+  {
+   "name": "アサルトバイク",
+   "muscle_group": "cardio",
+   "metric_kind": "duration_distance",
+   "match": "excluded"
+  },
+  {
+   "name": "ステアクライマー",
+   "muscle_group": "cardio",
+   "metric_kind": "duration",
+   "match": "excluded"
+  },
+  {
+   "name": "ランニング（屋外）",
+   "muscle_group": "cardio",
+   "metric_kind": "duration_distance",
+   "match": "excluded"
+  },
+  {
+   "name": "ウォーキング（屋外）",
+   "muscle_group": "cardio",
+   "metric_kind": "duration_distance",
+   "match": "excluded"
+  },
+  {
+   "name": "サイクリング（屋外）",
+   "muscle_group": "cardio",
+   "metric_kind": "duration_distance",
+   "match": "excluded"
+  },
+  {
+   "name": "水泳",
+   "muscle_group": "cardio",
+   "metric_kind": "duration_distance",
+   "match": "excluded"
+  },
+  {
+   "name": "縄跳び",
+   "muscle_group": "cardio",
+   "metric_kind": "duration",
+   "match": "excluded"
+  },
+  {
+   "name": "パワークリーン",
+   "muscle_group": "full_body",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "power-clean"
+  },
+  {
+   "name": "クリーン&ジャーク",
+   "muscle_group": "full_body",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "clean-and-jerk"
+  },
+  {
+   "name": "スナッチ",
+   "muscle_group": "full_body",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "snatch"
+  },
+  {
+   "name": "スラスター",
+   "muscle_group": "full_body",
+   "metric_kind": "weight_reps",
+   "match": "exact",
+   "slug": "thruster"
+  },
+  {
+   "name": "ケトルベルスイング",
+   "muscle_group": "full_body",
+   "metric_kind": "weight_reps",
+   "match": "derived",
+   "slug": "dumbbell-romanian-deadlift",
+   "label": "換算（dumbbell-romanian-deadlift の表）"
+  },
+  {
+   "name": "ターキッシュゲットアップ",
+   "muscle_group": "full_body",
+   "metric_kind": "weight_reps",
+   "match": "derived",
+   "slug": "dumbbell-shoulder-press",
+   "label": "換算（dumbbell-shoulder-press の表）"
+  },
+  {
+   "name": "バーピー",
+   "muscle_group": "full_body",
+   "metric_kind": "reps_only",
+   "match": "exact",
+   "slug": "burpees"
+  },
+  {
+   "name": "ボックスジャンプ",
+   "muscle_group": "full_body",
+   "metric_kind": "reps_only",
+   "match": "derived",
+   "slug": "squat-jump",
+   "label": "換算（squat-jump の表）"
+  },
+  {
+   "name": "バトルロープ",
+   "muscle_group": "full_body",
+   "metric_kind": "duration",
+   "match": "excluded"
+  }
+ ]
+}

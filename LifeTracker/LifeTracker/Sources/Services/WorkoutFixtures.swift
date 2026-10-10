@@ -6,7 +6,8 @@ enum WorkoutFixtures {
     /// 1 セット = (重量, 回数, 秒)。種目の metric_kind に合う列だけ使う
     private typealias Row = (weight: Double?, reps: Int?, sec: Int?)
 
-    static func makeMockDataSource(now: Date = Date()) -> MockWorkoutDataSource {
+    /// withProfile = false なら強さのプロフィール未設定から始める (`-mock-no-profile`。初回入力の確認用)
+    static func makeMockDataSource(now: Date = Date(), withProfile: Bool = true) -> MockWorkoutDataSource {
         let bench = Exercise(id: UUID(), name: "ベンチプレス", muscleGroup: .chest, equipment: .barbell,
                              metricKind: .weightReps, note: "セーフティは胸の少し下", isArchived: false, sortOrder: 100)
         let incline = Exercise(id: UUID(), name: "インクラインDBプレス", muscleGroup: .chest, equipment: .dumbbell,
@@ -25,6 +26,11 @@ enum WorkoutFixtures {
                                 metricKind: .weightReps, note: nil, isArchived: false, sortOrder: 260)
         let plank = Exercise(id: UUID(), name: "プランク", muscleGroup: .core, equipment: .bodyweight,
                              metricKind: .duration, note: nil, isArchived: false, sortOrder: 300)
+        // 強さの換算 (derived) と対象外の確認用。名前は種目マスタ (0004) と同じ
+        let swing = Exercise(id: UUID(), name: "ケトルベルスイング", muscleGroup: .fullBody, equipment: .kettlebell,
+                             metricKind: .weightReps, note: nil, isArchived: false, sortOrder: 310)
+        let grip = Exercise(id: UUID(), name: "ハンドグリップ", muscleGroup: .forearms, equipment: .other,
+                            metricKind: .repsOnly, note: nil, isArchived: false, sortOrder: 320)
         let treadmill = Exercise(id: UUID(), name: "トレッドミル", muscleGroup: .cardio, equipment: .machine,
                                  metricKind: .durationDistance, note: nil, isArchived: false, sortOrder: 400)
         let programs = [("胸の日", [bench, incline, pushdown]), ("背中の日", [pullUp, latPulldown, curl]), ("脚の日", [squat, legPress, plank])]
@@ -49,7 +55,8 @@ enum WorkoutFixtures {
             (12, [(squat, [w(60, 10), w(70, 8), w(70, 8)]), (legPress, [w(120, 12), w(130, 10)]), (treadmill, [s(900)])]),
             (9, chestDay(62.5)),
             (8, backDay),
-            (5, [(squat, [w(70, 8), w(72.5, 6), w(72.5, 6)]), (legPress, [w(130, 12), w(140, 10)]), (plank, [s(60), s(45)])]),
+            (5, [(squat, [w(70, 8), w(72.5, 6), w(72.5, 6)]), (legPress, [w(130, 12), w(140, 10)]), (plank, [s(60), s(45)]),
+                 (swing, [w(24, 15), w(24, 15)]), (grip, [r(30)])]),
             (2, chestDay(65) + [(bench, [w(50, 12), w(50, 10)])]),
             (1, backDay),
         ]
@@ -77,8 +84,8 @@ enum WorkoutFixtures {
             }
         }
 
-        return MockWorkoutDataSource(
-            exercises: [bench, incline, pushdown, pullUp, latPulldown, curl, squat, legPress, plank, treadmill],
+        let mock = MockWorkoutDataSource(
+            exercises: [bench, incline, pushdown, pullUp, latPulldown, curl, squat, legPress, plank, swing, grip, treadmill],
             routines: programs.map(\.0),
             routineExercises: programs.flatMap { routine, exercises in
                 exercises.enumerated().map {
@@ -88,6 +95,13 @@ enum WorkoutFixtures {
             sessions: sessions,
             sets: sets
         )
+        if withProfile {
+            mock.profile = UserProfile(sex: .male, birthDate: calendar.date(from: DateComponents(year: 2003, month: 4, day: 1))!)
+            mock.bodyWeights = [(40, 71.2), (14, 70.6), (3, 70.1)].map {
+                BodyWeightRecord(recordedOn: calendar.date(byAdding: .day, value: -$0.0, to: today)!, weightKg: $0.1)
+            }
+        }
+        return mock
     }
 }
 #endif

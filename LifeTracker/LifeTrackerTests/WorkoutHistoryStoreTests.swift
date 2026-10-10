@@ -43,6 +43,10 @@ struct MockWorkoutRangeTests {
     }
 }
 
+private final class Flag {
+    var value = false
+}
+
 @Suite("WorkoutHistoryStore — 読み取り専用の週キャッシュ")
 @MainActor
 struct WorkoutHistoryStoreTests {
@@ -84,6 +88,100 @@ struct WorkoutHistoryStoreTests {
         store.invalidate()
         #expect(!store.isLoaded(weekStart: monday))
         await store.ensureLoaded(weekStarts: [monday])
+        #expect(source.fetchRangeCallCount == 2)
+    }
+
+    /// 止めた fetchSets に届くまで進める
+    private func waitUntilPending(_ source: MockWorkoutDataSource, _ count: Int = 1) async {
+        while source.pendingFetchSets < count { await Task.yield() }
+    }
+
+    @Test("取得中の週を別の呼び出しが頼むと、その取得を待ってから返る。フェッチは 1 回")
+    func waitsForInFlight() async {
+        let source = MockWorkoutDataSource(exercises: [bench], sets: [set(bench, at: jstDate("2026-09-29T07:00:00"))])
+        source.holdsFetchSets = true
+        let store = WorkoutHistoryStore(dataSource: source, calendar: jst)
+        let first = Task { await store.ensureLoaded(weekStarts: [monday]) }
+        await waitUntilPending(source)
+        let returned = Flag()
+        let second = Task {
+            await store.ensureLoaded(weekStarts: [monday])
+            returned.value = true
+        }
+        for _ in 0..<20 { await Task.yield() }
+        #expect(!returned.value, "取得中の週を待たずに返っている")
+        source.releaseFetchSets()
+        await second.value
+        #expect(store.isLoaded(weekStart: monday))
+        #expect(source.fetchRangeCallCount == 1)
+        await first.value
+    }
+
+    @Test("先に頼んだ側が取り消されても取得は続いて weeks に入り、後から頼んだ側は読めた状態で返る")
+    func cancelledCallerDoesNotDropFetch() async {
+        let source = MockWorkoutDataSource(exercises: [bench], sets: [set(bench, at: jstDate("2026-09-29T07:00:00"))])
+        source.holdsFetchSets = true
+        let store = WorkoutHistoryStore(dataSource: source, calendar: jst)
+        let first = Task { await store.ensureLoaded(weekStarts: [monday]) }
+        await waitUntilPending(source)
+        first.cancel()
+        let second = Task { await store.ensureLoaded(weekStarts: [monday]) }
+        for _ in 0..<5 { await Task.yield() }
+        source.releaseFetchSets()
+        await second.value
+        #expect(store.isLoaded(weekStart: monday))
+        #expect(store.sets(inWeekStarting: monday).count == 1)
+        #expect(store.error == nil && !store.isLoading)
+        #expect(source.fetchRangeCallCount == 1)
+    }
+
+    @Test("取得中に invalidate すると結果は捨て、世代が 1 増える。もう一度頼むと取り直す")
+    func invalidateWhileInFlight() async {
+        let source = MockWorkoutDataSource(exercises: [bench], sets: [set(bench, at: jstDate("2026-09-29T07:00:00"))])
+        source.holdsFetchSets = true
+        let store = WorkoutHistoryStore(dataSource: source, calendar: jst)
+        let first = Task { await store.ensureLoaded(weekStarts: [monday]) }
+        await waitUntilPending(source)
+        let generation = store.generation
+        store.invalidate()
+        #expect(store.generation == generation + 1)
+        source.holdsFetchSets = false
+        source.releaseFetchSets()
+        await first.value
+        #expect(!store.isLoaded(weekStart: monday))
+        await store.ensureLoaded(weekStarts: [monday])
+        #expect(store.isLoaded(weekStart: monday))
+        #expect(source.fetchRangeCallCount == 2)
+    }
+
+    @Test("invalidate の後に始まった取得の印は、古い取得の完了で消さない")
+    func staleFetchKeepsNewInFlight() async {
+        let source = MockWorkoutDataSource(exercises: [bench], sets: [set(bench, at: jstDate("2026-09-29T07:00:00"))])
+        source.holdsFetchSets = true
+        let store = WorkoutHistoryStore(dataSource: source, calendar: jst)
+        let old = Task { await store.ensureLoaded(weekStarts: [monday]) }
+        await waitUntilPending(source)
+        store.invalidate()
+        let fresh = Task { await store.ensureLoaded(weekStarts: [monday]) }
+        await waitUntilPending(source, 2)
+        source.releaseFetchSets()
+        await old.value
+        await fresh.value
+        #expect(store.isLoaded(weekStart: monday) && !store.isLoading)
+        // 3 つ目は読めた週なので取りに行かない
+        await store.ensureLoaded(weekStarts: [monday])
+        #expect(source.fetchRangeCallCount == 2)
+    }
+
+    @Test("取得が失敗すると取得中の印が外れ、次の呼び出しで取り直す")
+    func failureClearsInFlight() async {
+        let source = MockWorkoutDataSource(exercises: [bench], sets: [set(bench, at: jstDate("2026-09-29T07:00:00"))])
+        source.failNextFetchSets = true
+        let store = WorkoutHistoryStore(dataSource: source, calendar: jst)
+        await store.ensureLoaded(weekStarts: [monday])
+        #expect(!store.isLoaded(weekStart: monday) && store.error != nil && !store.isLoading)
+        await store.ensureLoaded(weekStarts: [monday])
+        #expect(store.isLoaded(weekStart: monday))
         #expect(source.fetchRangeCallCount == 2)
     }
 

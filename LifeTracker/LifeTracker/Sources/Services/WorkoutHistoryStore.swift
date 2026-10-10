@@ -17,10 +17,10 @@ final class WorkoutHistoryStore: ObservableObject {
 
     private let dataSource: WorkoutDataSource
     private let calendar: Calendar
-    /// 取得中の週 (同じ週を並行して二重に取りに行かない)
-    private var inFlight: Set<Date> = []
-    /// invalidate より前に始まった取得の結果を捨てるための世代
-    private var generation = 0
+    /// 取得中の週 → その取得 (同じ週を並行して二重に取りに行かず、後から頼んだ側は同じ取得を待つ)
+    private var inFlight: [Date: Task<Void, Never>] = [:]
+    /// invalidate より前に始まった取得の結果を捨てるための世代。invalidate のたびに 1 増える (分析の先読みの読み直しの合図)
+    @Published private(set) var generation = 0
 
     init(dataSource: WorkoutDataSource, calendar: Calendar) {
         self.dataSource = dataSource
@@ -37,17 +37,30 @@ final class WorkoutHistoryStore: ObservableObject {
         weeks.values.flatMap { $0 }
     }
 
-    /// 未ロードの週だけを 1 リクエスト (最古の週頭〜最新の週末) で取得する
+    /// 未ロードの週がそろうまで待つ。取得中でない週だけを 1 リクエスト (最古の週頭〜最新の週末) で取り、取得中の週はその取得を待つ。
+    /// 取得は store が持つ Task で走らせる: 呼び出し元 (View の .task) が取り消されても取得は続いて weeks に入り、
+    /// 同じ週を待っている別の呼び出しが「読み込み中」のまま取り残されない (docs/analysis-tabs-discussion/40-integration.md §3-2)
     func ensureLoaded(weekStarts: [Date]) async {
-        let targets = Set(weekStarts.map { WorkoutSummary.weekStart(containing: $0, calendar: calendar) })
-            .filter { weeks[$0] == nil && !inFlight.contains($0) }
-        guard let from = targets.min(), let last = targets.max() else { return }
-        let to = WorkoutSummary.weekInterval(containing: last, calendar: calendar).end
-        let startedGeneration = generation
-        inFlight.formUnion(targets)
-        isLoading = true
+        let missing = Set(weekStarts.map { WorkoutSummary.weekStart(containing: $0, calendar: calendar) }).filter { weeks[$0] == nil }
+        var waiting = Set(missing.compactMap { inFlight[$0] })
+        let targets = missing.filter { inFlight[$0] == nil }
+        if let from = targets.min(), let last = targets.max() {
+            let to = WorkoutSummary.weekInterval(containing: last, calendar: calendar).end
+            let startedGeneration = generation
+            let task = Task { await fetch(targets, from: from, to: to, startedGeneration: startedGeneration) }
+            for start in targets { inFlight[start] = task }
+            isLoading = true
+            waiting.insert(task)
+        }
+        for task in waiting { await task.value }
+    }
+
+    private func fetch(_ targets: Set<Date>, from: Date, to: Date, startedGeneration: Int) async {
         defer {
-            inFlight.subtract(targets)
+            // invalidate 後は inFlight が空から作り直されている (別の取得の分を消さない)
+            if startedGeneration == generation {
+                for start in targets { inFlight[start] = nil }
+            }
             isLoading = !inFlight.isEmpty
         }
         do {
@@ -74,7 +87,7 @@ final class WorkoutHistoryStore: ObservableObject {
     /// キャッシュを捨てる (今日のセッションが変わったとき。日跨ぎで昨日の分を取りこぼさないため)
     func invalidate() {
         generation += 1
-        inFlight = [] // 取得中の結果は捨てるので、同じ週をすぐ取り直せるようにする
+        inFlight = [:] // 取得中の結果は捨てるので、同じ週をすぐ取り直せるようにする
         weeks = [:]
         entriesById = [:]
     }

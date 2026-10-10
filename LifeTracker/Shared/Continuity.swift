@@ -8,7 +8,7 @@ nonisolated struct WeeklyGoal: Codable, Hashable {
 
 /// 継続の表示 (連続日数・今週のリング・今週 7 日の点)
 nonisolated struct ContinuityStatus: Equatable {
-    /// 連続日数 (休息日も含む)。0 = 連続なし
+    /// 連続日数 = 連続している週の中でトレーニングした日の数 (休息日は数えない・途切れもしない)。0 = 連続なし
     let streakDays: Int
     let weekCount: Int
     let weekTarget: Int
@@ -23,7 +23,8 @@ nonisolated struct ContinuityStatus: Equatable {
 }
 
 /// 週 N 回の目標を基準にした継続の計算。pure (アプリとウィジェットで共有)。
-/// 週は月曜始まり。目標を満たした週が続くかぎり休息日も連続に数え、N 回に届かず週が終わった時点で途切れる
+/// 週は月曜始まり。目標を満たした週が続くかぎり休息日で途切れず (数えもしない)、N 回に届かず週が終わった時点で途切れる。
+/// 2026-10-10 本人変更: 連続日数は休息日を含む暦日数ではなく、トレーニングした日の数
 nonisolated enum Continuity {
     static func weekStart(containing day: Date, calendar: Calendar) -> Date {
         let start = calendar.startOfDay(for: day)
@@ -55,12 +56,7 @@ nonisolated enum Continuity {
             chainStart = week
             week = calendar.date(byAdding: .day, value: -7, to: week)!
         }
-        let streakDays: Int
-        if let first = days.filter({ $0 >= chainStart }).min() {
-            streakDays = (calendar.dateComponents([.day], from: first, to: todayKey).day ?? 0) + 1
-        } else {
-            streakDays = 0
-        }
+        let streakDays = Set(days.filter { $0 >= chainStart }).count
 
         let weekDays = (0..<7).map { calendar.date(byAdding: .day, value: $0, to: currentWeek)! }
         let thisWeek = byWeek[currentWeek] ?? []

@@ -57,6 +57,15 @@ protocol WorkoutDataSource {
     func fetchWeeklyGoals() async throws -> [WeeklyGoal]
     /// 同じ週頭の目標があれば上書きする (effective_from の UNIQUE で upsert)
     func saveWeeklyGoal(_ goal: WeeklyGoal) async throws
+
+    /// プロフィール (1 行)。未設定なら nil
+    func fetchProfile() async throws -> UserProfile?
+    /// 1 行を上書きする (id = 1 の upsert)
+    func saveProfile(_ profile: UserProfile) async throws
+    /// 体重の全期間 (recorded_on 順)。実装側でページングする
+    func fetchBodyWeights() async throws -> [BodyWeightRecord]
+    /// 同じ日があれば上書きする (recorded_on の upsert)
+    func saveBodyWeight(_ record: BodyWeightRecord) async throws
 }
 
 /// INSERT 用。id / DB 既定値は DB 側で採番する
