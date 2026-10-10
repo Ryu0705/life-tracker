@@ -1,7 +1,7 @@
 -- Life Tracker v2 — プロフィール (性別・生年月日) と体重の記録
 -- 2026-10-10 / 設計: docs/body-strength-and-heatmap-period.md「設計（確定）」の DB 節 (レビュー A-9・A-10)
 -- 適用方法: Supabase MCP apply_migration (name: v2_profile_body_weight) / supabase-cli は使わない
--- 本番適用: 未 (本人 OK 後)
+-- 本番適用: 済 (2026-10-10 本人 OK。MCP apply_migration v2_profile_body_weight・version 20261010142310)
 --
 -- 部位ごとの強さの級 (Strength Level の体重比の基準) に使う。級は表示のたびに端末で計算し保存しない (INV-5)。
 -- 基準の表 (JSON) はアプリにバンドルし DB には入れない。
