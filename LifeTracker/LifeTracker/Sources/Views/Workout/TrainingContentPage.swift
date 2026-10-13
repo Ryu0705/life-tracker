@@ -2,7 +2,8 @@ import SwiftUI
 import Charts
 
 /// 分析の中身ページ (docs/analysis-tabs-discussion/40-integration.md §2「中身ページ」):
-/// 週の総ボリューム・前週比・曜日×部位の棒グラフ。表示中の週は分析画面 (AnalysisView) が持つ
+/// 週の総ボリューム・前週比・曜日×部位の棒グラフと部位ごとの kg。表示中の週は分析画面 (AnalysisView) が持つ。
+/// 棒をタップするとその日を選び、部位ごとの kg がその日の分になる (docs/body-strength-and-heatmap-period.md「ボリュームページの追加要望」)
 struct TrainingContentPage: View {
     @ObservedObject var store: WorkoutSessionStore
     @ObservedObject var historyStore: WorkoutHistoryStore
@@ -10,6 +11,8 @@ struct TrainingContentPage: View {
     @Binding var weekStart: Date?
     let today: Date
     let calendar: Calendar
+    /// 棒をタップして選んだ日。nil = 週の合計
+    @State private var selectedDay: Date?
 
     private var shownWeek: Date { weekStart ?? WorkoutSummary.weekStart(containing: today, calendar: calendar) }
     private var previousWeek: Date { calendar.date(byAdding: .day, value: -7, to: shownWeek)! }
@@ -29,8 +32,12 @@ struct TrainingContentPage: View {
                                 onOlder: { weekStart = previousWeek },
                                 onNewer: { weekStart = calendar.date(byAdding: .day, value: 7, to: shownWeek) })
             }
-            Section("総ボリューム") {
-                volumeHeader(current: current, previous: previous, isPartial: previousThrough != nil)
+            Section(selectedDay.map { "\(WorkoutSummary.dayLabel($0, calendar: calendar)) のボリューム" } ?? "総ボリューム") {
+                if let selectedDay {
+                    dayVolumeHeader(selectedDay)
+                } else {
+                    volumeHeader(current: current, previous: previous, isPartial: previousThrough != nil)
+                }
                 if current.workingSetsByMuscle.isEmpty {
                     Text("この週の記録はありません")
                         .foregroundStyle(.secondary)
@@ -38,8 +45,12 @@ struct TrainingContentPage: View {
                     chart(current)
                 }
             }
+            if !current.workingSetsByMuscle.isEmpty {
+                muscleSection(current)
+            }
         }
         .task(id: shownWeek) { await historyStore.ensureLoaded(weekStarts: [shownWeek, previousWeek]) }
+        .onChange(of: shownWeek) { selectedDay = nil }
     }
 
     private func volumeHeader(current: WeekTotals, previous: WeekTotals?, isPartial: Bool) -> some View {
@@ -61,20 +72,116 @@ struct TrainingContentPage: View {
         }
     }
 
+    /// 選んだ日のボリュームと、前週の同じ曜日との比較
+    private func dayVolumeHeader(_ day: Date) -> some View {
+        let lastWeekDay = calendar.date(byAdding: .day, value: -7, to: day)!
+        let volume = dayVolume(day)
+        let previousVolume = historyStore.isLoaded(weekStart: previousWeek) ? dayVolume(lastWeekDay) : nil
+        let weekday = WorkoutSummary.weekdaySymbol(day, calendar: calendar)
+        return HStack(alignment: .firstTextBaseline) {
+            Text(volume.map { "\(WorkoutLogic.formatVolume($0))kg" } ?? "—")
+                .font(.title2.bold().monospacedDigit())
+            Spacer()
+            Group {
+                if let previousVolume,
+                   let change = WorkoutSummary.volumeChange(current: volume ?? 0, previous: previousVolume) {
+                    Text("前週の\(weekday)比 \(change >= 0 ? "+" : "")\(change)%（\(WorkoutLogic.formatVolume(previousVolume))kg）")
+                } else if historyStore.isLoaded(weekStart: previousWeek) {
+                    Text("前週の\(weekday)は記録なし")
+                }
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    /// その日の総ボリューム (週の総ボリュームと同じ数え方で、その日のセットだけ)
+    private func dayVolume(_ day: Date) -> Double? {
+        let week = WorkoutSummary.weekStart(containing: day, calendar: calendar)
+        let key = WorkoutSummary.dayKey(day, calendar: calendar)
+        let sets = WorkoutSummary.mergeToday(historySets: historyStore.sets(inWeekStarting: week), todaySets: store.sets,
+                                             today: today, calendar: calendar)
+            .filter { $0.completedAt.map { WorkoutSummary.dayKey($0, calendar: calendar) == key } ?? false }
+        return WorkoutProgress.value(of: .volume, in: sets)
+    }
+
     /// 曜日×kg を部位で積み上げ。kg のない日 (自重・時間のみ) は 0
     private func chart(_ totals: WeekTotals) -> some View {
         let symbols = WorkoutSummary.weekDays(containing: shownWeek, calendar: calendar).map { WorkoutSummary.weekdaySymbol($0, calendar: calendar) }
         let muscles = Exercise.MuscleGroup.allCases.filter { m in totals.byDayMuscle.contains { $0.muscle == m } }
-        return Chart(totals.byDayMuscle, id: \.self) { entry in
-            BarMark(
-                x: .value("曜日", WorkoutSummary.weekdaySymbol(entry.day, calendar: calendar)),
-                y: .value("kg", entry.volume)
-            )
-            .foregroundStyle(by: .value("部位", entry.muscle.displayName))
+        let selectedSymbol = selectedDay.map { WorkoutSummary.weekdaySymbol($0, calendar: calendar) }
+        return Chart {
+            ForEach(totals.byDayMuscle, id: \.self) { entry in
+                BarMark(
+                    x: .value("曜日", WorkoutSummary.weekdaySymbol(entry.day, calendar: calendar)),
+                    y: .value("kg", entry.volume)
+                )
+                .foregroundStyle(by: .value("部位", entry.muscle.displayName))
+                .opacity(selectedDay == nil || selectedDay == entry.day ? 1 : 0.3)
+            }
+            // 選んだ日以外の列を灰色で覆う (選んだ日の列に色を敷くと、棒が上に伸びたように見えた・10/13 本人)
+            if let selectedSymbol {
+                ForEach(symbols.filter { $0 != selectedSymbol }, id: \.self) { symbol in
+                    RectangleMark(x: .value("曜日", symbol), width: .ratio(1))
+                        .foregroundStyle(Color.gray.opacity(0.18))
+                }
+            }
         }
         .chartXScale(domain: symbols)
+        .chartXAxis {
+            AxisMarks { value in
+                AxisGridLine()
+                AxisValueLabel {
+                    let symbol = value.as(String.self) ?? ""
+                    Text(symbol)
+                        .fontWeight(symbol == selectedSymbol ? .bold : .regular)
+                        .foregroundStyle(symbol == selectedSymbol ? Color.accentColor : .secondary)
+                }
+            }
+        }
         .chartForegroundStyleScale(domain: muscles.map(\.displayName), range: muscles.map { Self.color($0) })
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                Rectangle().fill(.clear).contentShape(Rectangle())
+                    .gesture(SpatialTapGesture().onEnded { tap in
+                        guard let plot = proxy.plotFrame else { return }
+                        let x = tap.location.x - geometry[plot].origin.x
+                        guard let symbol: String = proxy.value(atX: x),
+                              let day = WorkoutSummary.weekDays(containing: shownWeek, calendar: calendar)
+                                .first(where: { WorkoutSummary.weekdaySymbol($0, calendar: calendar) == symbol }) else { return }
+                        // 同じ日をもう一度タップしたら週の合計に戻す
+                        selectedDay = selectedDay == day ? nil : day
+                    })
+            }
+        }
         .frame(height: 180)
+    }
+
+    /// 部位ごとの kg (多い順)。日を選んでいればその日、いなければ週の合計
+    private func muscleSection(_ totals: WeekTotals) -> some View {
+        let entries = totals.byDayMuscle.filter { selectedDay == nil || $0.day == selectedDay }
+        let rows = Dictionary(grouping: entries, by: \.muscle)
+            .map { (muscle: $0.key, volume: $0.value.reduce(0) { $0 + $1.volume }) }
+            .sorted { ($1.volume, $0.muscle.displayName) < ($0.volume, $1.muscle.displayName) }
+        return Section {
+            if rows.isEmpty {
+                Text("この日の記録はありません")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(rows, id: \.muscle) { row in
+                HStack {
+                    Circle().fill(Self.color(row.muscle)).frame(width: 10, height: 10)
+                    Text(row.muscle.displayName)
+                    Spacer()
+                    // kg のない部位 (自重・時間のみ) は — にする
+                    Text(row.volume > 0 ? "\(WorkoutLogic.formatVolume(row.volume))kg" : "—")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text(selectedDay.map { "\(WorkoutSummary.dayLabel($0, calendar: calendar)) の部位別" } ?? "部位別（週の合計）")
+        }
     }
 
     private func totals(_ week: Date, through: Date? = nil) -> WeekTotals {

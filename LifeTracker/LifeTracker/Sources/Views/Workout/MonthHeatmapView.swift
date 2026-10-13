@@ -151,7 +151,7 @@ struct AnalysisContinuitySection: View {
             }
         } header: {
             HStack {
-                // ナビバーの「継続」と同じ語を並べない
+                // ナビバーの「頻度」と同じ語を並べない
                 Text("トレーニングした日")
                 Spacer()
                 Picker("期間", selection: $range) {

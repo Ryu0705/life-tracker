@@ -1,113 +1,142 @@
 import SwiftUI
 
-/// 強さの人体図: 前面・背面を横並び。0〜1 の正規化座標に部位ごとの基本図形を置く (Path の手描きはしない。レビュー A-13 代案 1)。
-/// 塗り = 級の色、輪郭 = .secondary。小さい部位は図の下の一覧からも同じシートを開ける
+/// 強さの人体図: 写実の筋肉画像 (前面・背面を横並び) に部位マスクをランクの色で乗算して重ねる (2026-10-13 本人 F-3)。
+/// 素材は js-rich-body-highlighter (MIT。docs/body-diagram/)。画像 = Assets の Body{Male,Female}{Front,Back}、マスク = BodyDiagramPaths (生成物)。
+/// 記録なし・基準なしは塗らない。タップはマスクの形で判定。小さい部位は図の下の一覧からも同じシートを開ける
 struct BodyDiagramView: View {
     let states: [Exercise.MuscleGroup: MuscleState]
+    var female = false
     let onSelect: (Exercise.MuscleGroup) -> Void
 
-    private enum Kind { case ellipse, capsule, rounded }
+    @Environment(\.colorScheme) private var colorScheme
 
-    /// x, y, 幅, 高さ (図 1 枚の幅 = 1、高さ = 1。縦横比 1:2 の枠に置く)
-    private struct Part {
-        let muscle: Exercise.MuscleGroup?
-        let kind: Kind
-        let rect: CGRect
-    }
-
-    private static func pair(_ muscle: Exercise.MuscleGroup?, _ kind: Kind, x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat) -> [Part] {
-        [Part(muscle: muscle, kind: kind, rect: CGRect(x: x, y: y, width: w, height: h)),
-         Part(muscle: muscle, kind: kind, rect: CGRect(x: 1 - x - w, y: y, width: w, height: h))]
-    }
-
-    /// 頭・首・手・骨盤 (部位なし・薄い灰)
-    private static let frame: [Part] = [
-        Part(muscle: nil, kind: .ellipse, rect: CGRect(x: 0.41, y: 0.0, width: 0.18, height: 0.09)),
-        Part(muscle: nil, kind: .rounded, rect: CGRect(x: 0.46, y: 0.085, width: 0.08, height: 0.04)),
-        Part(muscle: nil, kind: .rounded, rect: CGRect(x: 0.36, y: 0.445, width: 0.28, height: 0.05)),
-    ] + pair(nil, .ellipse, x: 0.11, y: 0.51, w: 0.08, h: 0.05)
-
-    private static let front: [Part] = frame
-        + pair(.shoulders, .ellipse, x: 0.19, y: 0.125, w: 0.16, h: 0.08)
-        + pair(.chest, .rounded, x: 0.335, y: 0.135, w: 0.16, h: 0.1)
-        + pair(.biceps, .capsule, x: 0.17, y: 0.2, w: 0.1, h: 0.15)
-        + pair(.forearms, .capsule, x: 0.12, y: 0.355, w: 0.09, h: 0.15)
-        + [Part(muscle: .core, kind: .rounded, rect: CGRect(x: 0.375, y: 0.245, width: 0.25, height: 0.195))]
-        + pair(.quads, .capsule, x: 0.335, y: 0.5, w: 0.15, h: 0.23)
-        + pair(.calves, .capsule, x: 0.35, y: 0.75, w: 0.115, h: 0.21)
-
-    private static let back: [Part] = frame
-        + [Part(muscle: .traps, kind: .rounded, rect: CGRect(x: 0.36, y: 0.11, width: 0.28, height: 0.07))]
-        + pair(.shoulders, .ellipse, x: 0.19, y: 0.125, w: 0.16, h: 0.08)
-        + pair(.back, .rounded, x: 0.335, y: 0.185, w: 0.16, h: 0.25)
-        + pair(.triceps, .capsule, x: 0.17, y: 0.2, w: 0.1, h: 0.15)
-        + pair(.forearms, .capsule, x: 0.12, y: 0.355, w: 0.09, h: 0.15)
-        + pair(.glutes, .ellipse, x: 0.34, y: 0.425, w: 0.155, h: 0.1)
-        + pair(.hamstrings, .capsule, x: 0.335, y: 0.53, w: 0.15, h: 0.2)
-        + pair(.calves, .capsule, x: 0.35, y: 0.75, w: 0.115, h: 0.21)
-
-    var body: some View {
-        HStack(spacing: 16) {
-            figure(Self.front, title: "前")
-            figure(Self.back, title: "後")
+    /// 素材の部位 → アプリの部位。背面の僧帽筋は背中上部と 1 つの形 (upper_back) なので僧帽筋に寄せる
+    static func muscle(group: String) -> Exercise.MuscleGroup? {
+        switch group {
+        case "chest": return .chest
+        case "shoulders": return .shoulders
+        case "biceps": return .biceps
+        case "triceps": return .triceps
+        case "forearms": return .forearms
+        case "abs", "obliques": return .core
+        case "upper_back": return .traps
+        case "lats", "lower_back": return .back
+        case "glutes": return .glutes
+        case "quads": return .quads
+        case "hamstrings": return .hamstrings
+        case "calves": return .calves
+        default: return nil
         }
     }
 
-    private func figure(_ parts: [Part], title: String) -> some View {
-        VStack(spacing: 4) {
+    private struct Shape: Identifiable {
+        let id: String
+        let muscle: Exercise.MuscleGroup
+        let path: Path
+    }
+
+    /// 起動後 1 回だけ文字列から Path を作る (36 枚)
+    private static let shapes: [String: Shape] = {
+        var result: [String: Shape] = [:]
+        for mask in BodyDiagramPaths.masks {
+            guard let muscle = muscle(group: mask.group) else { continue }
+            result[mask.id] = Shape(id: mask.id, muscle: muscle, path: path(mask.d))
+        }
+        return result
+    }()
+
+    private func shapes(front: Bool) -> [Shape] {
+        BodyDiagramPaths.masks.filter { $0.front == front && $0.female == female }.compactMap { Self.shapes[$0.id] }
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            figure(front: true, title: "前")
+            figure(front: false, title: "後")
+        }
+    }
+
+    private func figure(front: Bool, title: String) -> some View {
+        let parts = shapes(front: front)
+        let box = BodyDiagramPaths.viewBox
+        return VStack(spacing: 4) {
             GeometryReader { geo in
-                let size = geo.size
+                let scale = geo.size.width / box.width
+                let transform = CGAffineTransform(scaleX: scale, y: scale)
+                let image = Image("Body\(female ? "Female" : "Male")\(front ? "Front" : "Back")").resizable()
+                let painted = parts.filter { Self.color(states[$0.muscle] ?? .noRecord) != .clear }
                 ZStack(alignment: .topLeading) {
-                    ForEach(parts.indices, id: \.self) { index in
-                        shape(parts[index], in: size)
+                    // 塗らない部位は薄く引く (Silver は灰に近く、同じ濃さだと塗ったのか分からない)
+                    image.opacity(0.45)
+                    ForEach(painted) { part in
+                        let shape = part.path.applying(transform)
+                        image.mask(shape)
+                        shape.fill(Self.color(states[part.muscle] ?? .noRecord))
+                            // 明るい画像は乗算で筋の溝に色を残す。暗い画像は乗算だと沈むので色を重ねる
+                            .blendMode(colorScheme == .dark ? .color : .multiply)
                     }
                 }
+                .frame(width: geo.size.width, height: geo.size.height)
+                .compositingGroup()
+                .contentShape(Rectangle())
+                .onTapGesture { location in
+                    let point = location.applying(transform.inverted())
+                    if let hit = parts.first(where: { $0.path.contains(point) }) { onSelect(hit.muscle) }
+                }
             }
-            .aspectRatio(0.5, contentMode: .fit)
+            .aspectRatio(box.width / box.height, contentMode: .fit)
             Text(title).font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
+        // 部位ごとの操作は図の下の一覧が担う (VoiceOver もそちら)
+        .accessibilityHidden(true)
     }
 
-    @ViewBuilder
-    private func shape(_ part: Part, in size: CGSize) -> some View {
-        let rect = CGRect(x: part.rect.minX * size.width, y: part.rect.minY * size.height,
-                          width: part.rect.width * size.width, height: part.rect.height * size.height)
-        let fill = part.muscle.map { Self.color(states[$0] ?? .noRecord) } ?? Color.secondary.opacity(0.08)
-        let base = Group {
-            switch part.kind {
-            case .ellipse: Ellipse().fill(fill).overlay(Ellipse().stroke(Color.secondary.opacity(0.6), lineWidth: 0.5))
-            case .capsule: Capsule().fill(fill).overlay(Capsule().stroke(Color.secondary.opacity(0.6), lineWidth: 0.5))
-            case .rounded:
-                RoundedRectangle(cornerRadius: rect.width * 0.25).fill(fill)
-                    .overlay(RoundedRectangle(cornerRadius: rect.width * 0.25).stroke(Color.secondary.opacity(0.6), lineWidth: 0.5))
+    /// 生成物の d (絶対座標の M/L/C/Q/Z だけ) → Path
+    static func path(_ d: String) -> Path {
+        var path = Path()
+        let tokens = d.split(separator: " ")
+        var i = 0
+        func point() -> CGPoint {
+            defer { i += 2 }
+            return CGPoint(x: Double(tokens[i])!, y: Double(tokens[i + 1])!)
+        }
+        while i < tokens.count {
+            let command = tokens[i]
+            i += 1
+            switch command {
+            case "M": path.move(to: point())
+            case "L": path.addLine(to: point())
+            case "C":
+                let c1 = point(), c2 = point()
+                path.addCurve(to: point(), control1: c1, control2: c2)
+            case "Q":
+                let c = point()
+                path.addQuadCurve(to: point(), control: c)
+            case "Z": path.closeSubpath()
+            default: assertionFailure("未対応のコマンド \(command)")
             }
         }
-        .frame(width: rect.width, height: rect.height)
-        .offset(x: rect.minX, y: rect.minY)
-        if let muscle = part.muscle {
-            base
-                .contentShape(Rectangle())
-                .onTapGesture { onSelect(muscle) }
-                .accessibilityElement()
-                .accessibilityLabel(muscle.displayName)
-                .accessibilityAddTraits(.isButton)
-        } else {
-            base.accessibilityHidden(true)
-        }
+        return path
     }
 
-    /// 灰 = 記録なし・基準なし、級は 6 段 (Beginner 未満 = 最も薄い)
+    /// 記録なし・基準なしは塗らない (輪郭だけ。Silver の灰と取り違えない・F-7)、級はランクの色
     static func color(_ state: MuscleState) -> Color {
         switch state {
-        case .noRecord: return Color.secondary.opacity(0.15)
-        case .noStandard: return Color.secondary.opacity(0.3)
-        case .level(let value): return color(level: value)
+        case .noRecord, .noStandard: return Color.clear
+        case .level(let value): return color(rank: StrengthLevels.rank(value).rank)
         }
     }
 
-    static func color(level value: Double) -> Color {
-        let step = value < 1 ? 0 : min(5, Int(value))
-        return Color.blue.opacity([0.15, 0.3, 0.45, 0.62, 0.8, 1][step])
+    /// Apex 風の 6 色 (銅・銀・金・プラチナの青緑・ダイヤの青・マスターの紫)
+    static func color(rank: StrengthLevels.Rank) -> Color {
+        switch rank {
+        case .bronze: return Color(red: 0.69, green: 0.44, blue: 0.25)
+        case .silver: return Color(red: 0.62, green: 0.70, blue: 0.82)
+        case .gold: return Color(red: 0.88, green: 0.71, blue: 0.23)
+        case .platinum: return Color(red: 0.25, green: 0.72, blue: 0.69)
+        case .diamond: return Color(red: 0.24, green: 0.48, blue: 0.95)
+        case .master: return Color(red: 0.61, green: 0.30, blue: 0.88)
+        }
     }
 }

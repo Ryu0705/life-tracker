@@ -230,6 +230,38 @@ enum StrengthLevels {
         }
     }
 
+    /// ランク (2026-10-11 本人 F-7): 級の段 → Bronze〜Master、小数部 → 細分 IV〜I (.00〜.24 = IV … .75〜.99 = I)。Master は細分なし
+    enum Rank: Int, CaseIterable {
+        case bronze, silver, gold, platinum, diamond, master
+
+        var name: String {
+            switch self {
+            case .bronze: return "Bronze"
+            case .silver: return "Silver"
+            case .gold: return "Gold"
+            case .platinum: return "Platinum"
+            case .diamond: return "Diamond"
+            case .master: return "Master"
+            }
+        }
+    }
+
+    /// 0〜5 の値 → ランクと細分 (1〜4。Master は nil)。段は級の名前と同じく切り捨て
+    static func rank(_ value: Double) -> (rank: Rank, division: Int?) {
+        let step = max(0, min(5, Int(value.rounded(.down))))
+        let rank = Rank(rawValue: step)!
+        guard rank != .master else { return (rank, nil) }
+        let fraction = max(0, value - Double(step))
+        return (rank, 4 - min(3, Int(fraction * 4)))
+    }
+
+    /// "Gold I" / "Master"
+    static func rankName(_ value: Double) -> String {
+        let r = rank(value)
+        guard let division = r.division else { return r.rank.name }
+        return "\(r.rank.name) \(["I", "II", "III", "IV"][division - 1])"
+    }
+
     /// 級の名前 (切り捨て。1 未満は「Beginner 未満」)
     static func levelName(_ value: Double) -> String {
         value < 1 ? "Beginner 未満" : StrengthStandards.levelNames[min(4, Int(value) - 1)]

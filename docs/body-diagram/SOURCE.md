@@ -1,0 +1,1 @@
+取得元: https://github.com/crmapache/js-rich-body-highlighter commit 107dafe86f91298d66a41ff1c7b7251b073983d8 (2026-07-01)。画像は src/assets/bodies/*.webp を PNG・高さ 1024px に縮小して Assets.xcassets の Body{Male,Female}{Front,Back} へ（明暗 = Any/Dark）。絵の作者・出典は repo に記載なし（未確認）

@@ -88,7 +88,7 @@ struct BodyStrengthSections: View {
         let isLoaded = period.weekStarts(today: today, calendar: calendar).allSatisfy { historyStore.isLoaded(weekStart: $0) }
         let sets = WorkoutSummary.mergeToday(historySets: historyStore.loadedSets, todaySets: store.sets, today: today, calendar: calendar)
         let summary = summary(sets: sets, interval: interval, isLoaded: isLoaded)
-        // 見出しなし (ナビバーの「強さ」がページを示す)
+        // 見出しなし (ナビバーの「ランク」がページを示す)
         Section {
             PeriodNavigator(label: period.label(today: today, calendar: calendar), currentCaption: "直近\(StrengthPeriod.days)日",
                             isCurrent: period.isRecent, unit: "期間",
@@ -108,10 +108,12 @@ struct BodyStrengthSections: View {
             if !isLoaded && profileStore.setup == .ready {
                 Text("読み込み中…").foregroundStyle(.secondary)
             }
-            BodyDiagramView(states: Dictionary(uniqueKeysWithValues: summary.map { ($0.muscle, $0.state) })) { muscle in
+            // 性別はプロフィール (未設定は男性の図)
+            BodyDiagramView(states: Dictionary(uniqueKeysWithValues: summary.map { ($0.muscle, $0.state) }),
+                            female: profileStore.profile?.sex == .female) { muscle in
                 selected = summary.first { $0.muscle == muscle }
             }
-            .frame(maxHeight: 260)
+            .frame(maxHeight: 300)
             .padding(.vertical, 4)
             .disabled(summary.isEmpty)
             legend
@@ -190,18 +192,19 @@ struct BodyStrengthSections: View {
         .contentShape(Rectangle())
     }
 
+    /// 6 ランクを 3 列 × 2 行 (色だけでは名前が分からないので全部に名前を付ける) ＋ 記録なしの輪郭
     private var legend: some View {
-        HStack(spacing: 4) {
-            Text("未満")
-            ForEach(0..<6, id: \.self) { step in
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(BodyDiagramView.color(level: Double(step)))
-                    .frame(width: 14, height: 10)
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .leading), count: 3), alignment: .leading, spacing: 6) {
+            ForEach(StrengthLevels.Rank.allCases, id: \.self) { rank in
+                HStack(spacing: 4) {
+                    RoundedRectangle(cornerRadius: 2).fill(BodyDiagramView.color(rank: rank)).frame(width: 14, height: 10)
+                    Text(rank.name)
+                }
             }
-            Text("Elite")
-            Spacer()
-            RoundedRectangle(cornerRadius: 2).fill(BodyDiagramView.color(.noRecord)).frame(width: 14, height: 10)
-            Text("記録なし")
+            HStack(spacing: 4) {
+                RoundedRectangle(cornerRadius: 2).stroke(Color.secondary.opacity(0.6), lineWidth: 0.5).frame(width: 14, height: 10)
+                Text("記録なし")
+            }
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
@@ -243,7 +246,9 @@ private struct MuscleRow: View {
 
     var body: some View {
         HStack {
-            Circle().fill(BodyDiagramView.color(muscle.state)).frame(width: 10, height: 10)
+            Circle().fill(BodyDiagramView.color(muscle.state))
+                .overlay(Circle().stroke(Color.secondary.opacity(0.6), lineWidth: 0.5))
+                .frame(width: 10, height: 10)
             Text(muscle.muscle.displayName).foregroundStyle(Color.primary)
             Spacer()
             Text(Self.stateText(muscle))
@@ -255,7 +260,7 @@ private struct MuscleRow: View {
 
     static func stateText(_ muscle: MuscleStrength) -> String {
         switch muscle.state {
-        case .level(let v): return "\(StrengthLevels.levelName(v)) \(BodyStrengthSections.valueText(v))"
+        case .level(let v): return StrengthLevels.rankName(v)
         case .noStandard(let n): return "基準なし \(n)種目"
         case .noRecord: return muscle.exercises.isEmpty ? "記録なし" : "対象外のみ"
         }
@@ -274,11 +279,18 @@ struct MuscleDetailSheet: View {
             List {
                 Section {
                     HStack {
-                        Circle().fill(BodyDiagramView.color(muscle.state)).frame(width: 12, height: 12)
+                        Circle().fill(BodyDiagramView.color(muscle.state))
+                            .overlay(Circle().stroke(Color.secondary.opacity(0.6), lineWidth: 0.5))
+                            .frame(width: 12, height: 12)
                         Text(MuscleRow.stateText(muscle)).font(.headline.monospacedDigit())
+                        if case .level(let v) = muscle.state {
+                            // 元の級 (Strength Level の名前と値) も小さく残す
+                            Text("\(StrengthLevels.levelName(v)) \(BodyStrengthSections.valueText(v))")
+                                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        }
                     }
                 } footer: {
-                    Text("部位の値は、種目ごとの最高の級の平均です。")
+                    Text("部位のランクは、種目ごとの最高の級の平均です。")
                 }
                 if muscle.exercises.isEmpty {
                     Text("この期間の記録はありません").foregroundStyle(.secondary)
@@ -304,7 +316,7 @@ struct MuscleDetailSheet: View {
                 Spacer()
                 switch entry.status {
                 case .level(let v, _, _):
-                    Text("\(StrengthLevels.levelName(v)) \(BodyStrengthSections.valueText(v))").monospacedDigit()
+                    Text(StrengthLevels.rankName(v)).monospacedDigit()
                 case .noStandard:
                     Text("基準なし").foregroundStyle(.secondary)
                 case .excluded:

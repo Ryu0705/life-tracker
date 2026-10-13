@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// トレーニングタブの右上 [📊] から push する分析 (3 つ目のタブにはしない)。
-/// ナビバー中央の「強さ｜継続｜中身」で 3 ページに分ける (docs/analysis-tabs-discussion/40-integration.md)。
+/// ナビバー中央の「ランク｜頻度｜ボリューム」 (ラベルは 10/11 本人 F-4)で 3 ページに分ける (docs/analysis-tabs-discussion/40-integration.md)。
 /// 各ページの期間はここに持つ: ページを切り替えても保ち、分析を出たら全部直近に戻る (この View ごと消えるため)
 struct AnalysisView: View {
     @ObservedObject var store: WorkoutSessionStore
@@ -10,7 +10,7 @@ struct AnalysisView: View {
     @ObservedObject var profileStore: ProfileStore
     let calendar: Calendar
 
-    /// 既定は毎回「強さ」(AI 既定 Q1)
+    /// 既定は毎回「ランク」(AI 既定 Q1)
     @State private var page: AnalysisPage = .strength
     @State private var strengthPeriod: StrengthPeriod = .recent
     @State private var heatmapRange: HeatmapRange = .halfYear
@@ -25,9 +25,9 @@ struct AnalysisView: View {
 
         var title: String {
             switch self {
-            case .strength: return "強さ"
-            case .continuity: return "継続"
-            case .content: return "中身"
+            case .strength: return "ランク"
+            case .continuity: return "頻度"
+            case .content: return "ボリューム"
             }
         }
     }
@@ -63,7 +63,9 @@ struct AnalysisView: View {
                     ForEach(AnalysisPage.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .fixedSize()
+                // ナビバーの余白を使って押しやすい幅・高さにする (実機で小さすぎた・10/11 本人)
+                .controlSize(.large)
+                .frame(width: 270)
             }
         }
         // 強さ・継続の色の基準の 26 週 (各ページの .task は 26 週より前へ動かしたときの分だけ)

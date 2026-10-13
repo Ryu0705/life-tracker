@@ -66,7 +66,7 @@ struct ProfileSheet: View {
                     Picker("性別", selection: $sex) {
                         ForEach(Sex.allCases) { Text($0.displayName).tag($0) }
                     }
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.menu)
                     DatePicker("生年月日", selection: $birthDate, in: ...today, displayedComponents: .date)
                         .environment(\.timeZone, calendar.timeZone)
                 } footer: {

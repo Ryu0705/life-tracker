@@ -162,6 +162,20 @@ struct StrengthLevelsTests {
         #expect(abs(v - 53.33 / 68) < 0.001)
     }
 
+    @Test("ランク: 段は切り捨て、細分は小数部の 4 等分、Master は細分なし")
+    func rankName() {
+        #expect(StrengthLevels.rankName(0) == "Bronze IV")
+        #expect(StrengthLevels.rankName(0.9) == "Bronze I")
+        #expect(StrengthLevels.rankName(1) == "Silver IV")
+        #expect(StrengthLevels.rankName(2.8) == "Gold I")
+        #expect(StrengthLevels.rankName(3.24) == "Platinum IV")
+        #expect(StrengthLevels.rankName(3.25) == "Platinum III")
+        #expect(StrengthLevels.rankName(3.5) == "Platinum II")
+        #expect(StrengthLevels.rankName(4.75) == "Diamond I")
+        #expect(StrengthLevels.rankName(4.999) == "Diamond I")
+        #expect(StrengthLevels.rankName(5) == "Master")
+    }
+
     @Test("名前は切り捨て、1 未満は Beginner 未満")
     func levelName() {
         #expect(StrengthLevels.levelName(0.9) == "Beginner 未満")
