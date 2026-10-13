@@ -22,7 +22,7 @@
 ## 本人の回答
 - Q1（2026-10-06）: AI が A 自分比の伸び（推奨）／B 体重比の基準で級（初級〜上級。体重・性別が要る・基準表は主要種目だけ）／C 量で代用 を提示 → 本人「**Bだが、全ての種目に対応すべき**」
 - Q2（2026-10-06）: 基準表の出どころ。AI が A 自前で作る（主要種目は公開の目安を参考・他は AI が換算で下書き→本人確認、推奨）／B Strength Level の数字を写す（規約で禁止・非推奨）／C 基準がある種目だけ を提示 → 本人「**BをベースにA**」（Strength Level を土台に、無い種目を A の方法で埋める）。
-- Q2-2（2026-10-06）: 数字の取り方。AI が A 先に許可を問い合わせる（推奨）／B AI がページを読んで写す（自動取得と複製の両方に当たる・規約違反を承知の扱い）／C 本人が手で写す を提示 → 本人「**B AI がページを読んで写す**」。扱い（AI 既定）: 必要な種目のページだけを間隔を空けて取得、写した数字は個人用アプリの中だけで使い、公開・再配布しない（リポジトリは非公開のまま）
+- Q2-2（2026-10-06）: 数字の取り方。AI が A 先に許可を問い合わせる（推奨）／B AI がページを読んで写す（自動取得と複製の両方に当たる・規約違反を承知の扱い）／C 本人が手で写す を提示 → 本人「**B AI がページを読んで写す**」。扱い（AI 既定）: 必要な種目のページだけを間隔を空けて取得、写した数字は個人用アプリの中だけで使い、公開・再配布しない（リポジトリは非公開のまま）→ **2026-10-13 訂正**: repo は転職活動のポートフォリオとして公開（PUBLIC）していた。本人は、基準値（`StrengthLevels.swift`・`docs/strength-standards/`）を含む commit の push を了承した（原文「pushして良い。転職活動のポートフォリオとして公開している」）。公開 repo に載ることは承知の上
 - Q3（2026-10-06）: 体重・性別の取り方。AI が A アプリで手入力・体重は日付つきで DB に残す（推奨）／B ヘルスケアから読む／C 最新値だけ端末に を提示 → 本人「**A アプリで手入力(推奨)**」
 - Q4（2026-10-06）: 部位の級の決め方。AI が A その部位で一番高い種目（推奨）／B やった種目の級の平均／C 重みつき平均 を提示 → 本人「**B 平均**」
 - Q5（2026-10-06）: 種目の級に使う記録の期間。AI が A ヒートマップの切り替え（1w・1month・half year）に連動（推奨）／B 直近 3 か月固定／C 全期間のベスト を提示 → 本人「**半年とかで見ると低い記録のものも入ってきてしまうでしょ。ベストなのは直近1ヶ月。ただ、対象を先月、先々月と切り替えられるように。**」→ 強さは直近 1 か月が既定で、先月・先々月に切り替えられる。ヒートマップの 1w・1month・half year の切り替えとは別（連動しない）
@@ -93,7 +93,7 @@
 - 近似の印【本人 Q3】: approx（10/8 にレッグプレスを exact に戻して 12 件）は級に使うが、種目の行に「近似（chest-press で代用）」のように代用元を出す。対応表に match 種別（exact／approx／derived）を持たせる
 - レッグプレス【本人 10/8】: マスタの「レッグプレス」は 45°（`sled-leg-press`）を exact とする。座位・水平式を使う場合は「ホリゾンタルレッグプレス」をマスタに足し `horizontal-leg-press` に対応させる（表は未取得・1 ページの追加取得で足りる）
 - 基準の無い種目（有酸素以外の none 15 件＋単位不一致 3 件 = 18 件）【本人 10/8: 対応するものがない場合は相当レベルを算出する】: 「基準なし」を最終状態にしない。種目ごとに換算規則（近い種目の表に係数を掛ける／回数・秒の記録を別の表へ換算する／外部の目安表を 5 段に当てる）を AI が根拠つきで下書き → 本人確認 → `derived` として対応表にバンドル。画面では「換算（pull-ups の加重の表・アシストはマイナス）」のように規則を 1 語で出す。「基準なし」は換算の確認が終わるまでの一時状態で、実装の着手は確認を待たない。下書き = `docs/strength-standards/derived-standards-draft.md`（2026-10-08 作成）。Strength Level に無いことは 10/8 に URL で確認済み（kettlebell-swing・turkish-get-up・step-up・box-jump・dead-hang・wall-sit・hollow-hold・dead-bug・bird-dog・v-up・band-pull-apart・hand-grip・assisted-pull-up・torso-rotation・battle-ropes・jump-rope は無し。farmers-walk・horizontal-leg-press・vertical-leg-press・single-leg-press はあり）
-- 基準データの持ち方: JSON と対応表（種目名 → slug・match 種別）を `LifeTracker/LifeTracker/Resources/` にバンドル（synced group で自動追加）。種目名で引く（名前は UNIQUE。seed 159 件と対応表 159 件は一致）。対応が無い種目は基準なし。DB には入れない（INV-5）。原本の置き場は Resources の 1 つにし、`docs/strength-standards/` には取得記録（parse.py・取得日・照合結果）だけ残す。非公開 repo の中だけで使う【本人 Q2-2】
+- 基準データの持ち方: JSON と対応表（種目名 → slug・match 種別）を `LifeTracker/LifeTracker/Resources/` にバンドル（synced group で自動追加）。種目名で引く（名前は UNIQUE。seed 159 件と対応表 159 件は一致）。対応が無い種目は基準なし。DB には入れない（INV-5）。原本の置き場は Resources の 1 つにし、`docs/strength-standards/` には取得記録（parse.py・取得日・照合結果）だけ残す。非公開 repo の中だけで使う【本人 Q2-2】（2026-10-13: repo は公開。本人が push を了承。Q2-2 の訂正を参照）
 
 ### DB（AI 既定・migration 0011。予定の旧列削除は 0012 へ繰り下げ、既存 docs と 0006 のコメントの「0011」は 10/7 に 0012 へ書き換え済み。レビュー A-9・A-10 反映）
 - `user_profile`（`id SMALLINT PRIMARY KEY CHECK (id = 1)`、`sex TEXT NOT NULL CHECK (sex IN ('male','female'))`、`birth_date DATE NOT NULL`、`created_at`。`updated_at` は持たない（既存 migration に例が無い））
