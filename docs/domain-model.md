@@ -1,10 +1,16 @@
 # Life Tracker v2 — ドメインモデル v16
 
 > **2026-09-30 追記（予定タブ段階 1。詳細 SSOT は `day-cycle-walkthrough.md`「段階 1 確定仕様」）**
-> - 繰り返しの予定は**世代管理**: `task_template` は系列の id を保つ表になり、中身は `task_template_version`（effective_from ごと、`is_ended` = これ以降を削除）に持つ。祝日パターンへの登録も `pattern_version_membership` で世代ごと（migration 0006、本番適用済）。`task_template` の旧列と `pattern_template_membership` は 0012（10/7: プロフィール/体重 `user_profile`・`body_weight_record` が 0011 を使用、`body-strength-and-heatmap-period.md`） で削除予定（実機確認後。0007 は段階 2 のチェックイン、0008 はトレーニングのセット連番、0009 は睡眠の sleep_record、0010 はトレーニングの workout_entry で使用）
+> - 繰り返しの予定は**世代管理**: `task_template` は系列の id を保つ表になり、中身は `task_template_version`（effective_from ごと、`is_ended` = これ以降を削除）に持つ。祝日パターンへの登録も `pattern_version_membership` で世代ごと（migration 0006、本番適用済）。`task_template` の旧列と `pattern_template_membership` は 0013（10/14: 時刻のないやることが 0012 を使用、`untimed-tasks-design.md`。10/7: プロフィール/体重 `user_profile`・`body_weight_record` が 0011 を使用、`body-strength-and-heatmap-period.md`） で削除予定（実機確認後。0007 は段階 2 のチェックイン、0008 はトレーニングのセット連番、0009 は睡眠の sleep_record、0010 はトレーニングの workout_entry で使用）
 > - 下の「F-A 3 択」「E-A」は、**「この予定」「これ以降のすべての予定」の 2 択**（過去日は編集不可のため Google の「すべて」= 編集日以降）に置き換えた。書き込みは DB 関数（RPC）で原子的に行い、関数内で「編集日 ≥ JST の今日」を検査する
 > - 休日パターン（apply_day = Holiday）は常に 1 件ある前提（0006 で固定。アプリは作らない）。第 1 世代の effective_from = 2026-04-26 は近似
 > - 未来日表示は前倒し（spec.md）
+
+> **2026-10-14 追記（時刻のないやること・目標の回数。migration 0012、本番未適用。下の「時刻のないやること・目標の回数」の節）**
+> - 予定の時刻を持たなくてよくなった（`task_template_version`・`scheduled_task` の時刻の列は NULL 可。両方あるか両方 NULL）。すべての予定が目標の回数 `target_count`（1〜99、既定 1）を持つ。繰り越し `carry_over` は時刻なしの繰り返しだけ
+> - `scheduled_task` に回の日 `occurrence_date`（時刻つきは開始の JST 日）と `created_at` を足し、同じ系列の同じ日の一意索引を `(template_id, occurrence_date)` に置き換えた。日の判定は start_at でなくこの列
+> - 回数はタップ 1 回 = 1 行の `actual_task_tap`。閉じた日（目標の回数目のタップの日とスキップした日の早い方）は保存しない
+> - 仕様の詳細は `untimed-tasks-design.md`（本人決定）・`untimed-tasks-implementation-plan.md`（細部）・`day-cycle-walkthrough.md`「時刻のないやること」。正の定義は `supabase/migrations/0012_untimed_tasks.sql`
 
 DDL レベル + 設計判断 + DayBuilder + Phase 2 持ち越し論点を集約した SSOT。
 
@@ -110,6 +116,8 @@ CREATE TABLE scheduled_task (
     CHECK (pattern_id IS NULL OR template_id IS NOT NULL)
 );
 
+-- 2026-10-14 (migration 0012): start_at / end_at は NULL 可 (時刻なし)。occurrence_date・target_count・created_at を追加し、
+--   下の一意索引は (template_id, occurrence_date) に置き換えた。下の節「時刻のないやること・目標の回数」
 -- Z 案 hybrid: 同一 template の同日 (JST) 重複物理化を防ぐ
 -- Phase 1 (D1 完全 lazy) では発生しないが、Phase 2+ で iv (範囲先読み) を入れた時の保護
 CREATE UNIQUE INDEX scheduled_task_template_day_unique
@@ -120,6 +128,8 @@ CREATE UNIQUE INDEX scheduled_task_template_day_unique
 -- 実績実体 (day_anchor なし)
 -- ============================================================
 
+-- 0007 で status・template_id・occurrence_date・scheduled_task_id を追加 (day-cycle-walkthrough.md「段階 2 確定仕様」)。
+-- 0012 で skipped_on・時刻 NULL の done・タップの表 actual_task_tap を追加 (下の節「時刻のないやること・目標の回数」)
 CREATE TABLE actual_task (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name        TEXT NOT NULL,
@@ -266,6 +276,98 @@ CREATE TABLE workout_set (
 CREATE INDEX workout_set_session_idx  ON workout_set (session_id);
 CREATE INDEX workout_set_exercise_idx ON workout_set (exercise_id);
 ```
+
+---
+
+## 時刻のないやること・目標の回数 (migration 0012・2026-10-14)
+
+正の定義は `supabase/migrations/0012_untimed_tasks.sql`（apply 名 `v2_untimed_tasks`。本番未適用）。ここは 0012 で変わったところだけを抜き出したもの。規則の原本は Swift（`InMemoryScheduleDataSource`・`CountProgress`・`TodoBuilder`）で、SQL はその写し。
+
+```sql
+-- 世代: 時刻は NULL 可 (時刻なし)。目標の回数と繰り越し
+ALTER TABLE task_template_version
+  ALTER COLUMN start_minutes_from_midnight DROP NOT NULL,
+  ALTER COLUMN duration_minutes DROP NOT NULL,
+  ADD COLUMN target_count INT NOT NULL DEFAULT 1,          -- 目標の回数 (時刻の有無に依らない)
+  ADD COLUMN carry_over BOOLEAN NOT NULL DEFAULT false,    -- 終わらなければ翌日にも出す
+  ADD CONSTRAINT task_template_version_target_chk CHECK (target_count BETWEEN 1 AND 99),
+  ADD CONSTRAINT task_template_version_timing_chk
+    CHECK ((start_minutes_from_midnight IS NULL) = (duration_minutes IS NULL)),
+  ADD CONSTRAINT task_template_version_carry_chk          -- 繰り越しは時刻なしだけ
+    CHECK (NOT carry_over OR start_minutes_from_midnight IS NULL);
+-- task_template の旧列も NULL 可 (時刻なしの系列は NULL で写す。旧列は 0013 で削除)
+
+-- 実体 (単発・O(d)): 回の日・目標・作った日時
+ALTER TABLE scheduled_task
+  ADD COLUMN occurrence_date DATE NOT NULL,                -- 一覧に出る日 (JST)。既存の行は start_at の JST 日で埋めた
+  ADD COLUMN target_count INT NOT NULL DEFAULT 1,
+  ADD COLUMN created_at TIMESTAMPTZ NOT NULL DEFAULT now(),-- やることの並び (作った順)。既存の行は start_at で埋めた
+  ALTER COLUMN start_at DROP NOT NULL,
+  ALTER COLUMN end_at DROP NOT NULL,
+  ADD CONSTRAINT scheduled_task_target_chk CHECK (target_count BETWEEN 1 AND 99),
+  ADD CONSTRAINT scheduled_task_timing_chk CHECK (
+    (start_at IS NOT NULL AND end_at IS NOT NULL AND occurrence_date = (start_at AT TIME ZONE 'Asia/Tokyo')::date)
+    OR (start_at IS NULL AND end_at IS NULL));
+DROP INDEX scheduled_task_template_day_unique;             -- start_at の式の索引
+CREATE UNIQUE INDEX scheduled_task_template_occurrence_unique
+  ON scheduled_task (template_id, occurrence_date) WHERE template_id IS NOT NULL;
+CREATE INDEX scheduled_task_occurrence_date_idx ON scheduled_task (occurrence_date);
+
+-- 実績: スキップした日・時刻 NULL の done (status は done / skipped のまま増やさない = 旧ビルドも読める)
+ALTER TABLE actual_task
+  ADD COLUMN skipped_on DATE,                              -- スキップした日 (見ている日)。NULL = 回の日
+  ADD CONSTRAINT actual_task_time_chk CHECK (              -- 作り直し (0007 の版は時刻 NULL の done を通さない)
+    (status = 'done' AND ((start_at IS NOT NULL AND end_at IS NOT NULL AND end_at > start_at)
+                          OR (start_at IS NULL AND end_at IS NULL)))
+    OR (status = 'skipped' AND start_at IS NULL AND end_at IS NULL)),
+  ADD CONSTRAINT actual_task_skipped_on_chk CHECK (skipped_on IS NULL OR status = 'skipped');
+-- 予定外の実績の時刻必須は actual_save が守る (CHECK にすると、系列を消して SET NULL になった時刻なしの done で止まる)
+
+-- 回数: タップ 1 回 = 1 行 (押した時刻)。回の記録を消すとタップも消える
+CREATE TABLE actual_task_tap (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  actual_task_id UUID NOT NULL REFERENCES actual_task (id) ON DELETE CASCADE,
+  tapped_at      TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX actual_task_tap_actual_idx ON actual_task_tap (actual_task_id, tapped_at);
+-- backfill: 回につながる既存の done に 1 行 (tapped_at = end_at)。回数 1 ≥ 目標 1 = 今の「やった」と同じ
+-- 表の権限は Supabase の既定 (anon・authenticated に開く。RLS 無効。0009 と同じ)
+```
+
+- 回数 = タップの数。完了 = 回数 ≥ その回の目標。**閉じた日** = 目標の回数目のタップの JST 日と、スキップした日（`skipped_on`。NULL なら回の日）の早い方。保存しない（タップ・目標・skipped_on から毎回求める）
+- 回の目標 = 単発はその実体、系列は O(d) があればその実体、無ければ d に効く世代（effective_from ≤ d の最新）。d に効く世代が終了の世代なら回は無い（目標は 1 として扱う）
+
+### 関数
+内部の関数は PostgREST が公開しないスキーマ `private` に置く（`REVOKE ... FROM PUBLIC`、anon・authenticated に USAGE と EXECUTE。SECURITY INVOKER）。public に置いて REVOKE すると、公開の RPC が中から呼んだ時点で anon の権限不足になる（INVOKER の関数は中から呼ぶ関数にも呼んだ人の EXECUTE が要る。2026-10-14 使い捨て DB で実測）。API からは 404。
+
+| 内部 (`private`) | 中身 |
+|---|---|
+| `todo_occurrence(template, date, single)` | 回の日・目標・予定の時刻・時刻つきか（見つからなければ NULL） |
+| `todo_target(template, date, single)` | 回の目標 |
+| `todo_closed_on(actual_id)` | 閉じた日 |
+| `schedule_assert_single_editable(id, new_date, new_untimed)` | 単発を変えてよいか（`day-cycle-walkthrough.md`「時刻のないやること」の表） |
+| `record_occurrence_checked(template, date, single)` | 回数の操作の共通の検査（回がある・回の日 ≤ 今日・時刻つきで目標 1 でない） |
+
+公開の RPC（anon・authenticated。引数は名前で呼ぶ。既定値なし）:
+
+| 関数 | 引数 | 0012 での変更 |
+|---|---|---|
+| `schedule_single_save` | p_id, p_date, p_name, p_category_id, p_start, p_duration, **p_target** | 引数追加（旧版は DROP）。時刻なしは p_start・p_duration が NULL。実績の回の日も単発の日に合わせる |
+| `schedule_single_delete` | p_id | 検査を assert_single_editable に |
+| `schedule_template_create` | p_date, p_name, p_category_id, p_start, p_duration, p_rrule, p_show_on_holiday, p_replace_single_id, **p_target, p_carry_over** | 引数追加。単発 → 繰り返しは、実績をつなぎ直す前に単発の検査 |
+| `schedule_template_save_following` | p_template_id, p_date, p_name, p_category_id, p_start, p_duration, p_rrule, p_show_on_holiday, **p_target, p_carry_over** | 引数追加。O(D) の削除は occurrence_date で。D より後の O(d) で時刻の有無が新しい中身と違うものは、その回の skipped と一緒に消す（done は残す。実装後レビュー R1） |
+| `schedule_template_delete_following` | p_template_id, p_date | 日の判定を occurrence_date に。終了の世代に目標・繰り越しも写す |
+| `schedule_template_end_to_single` | p_template_id, p_date, p_name, p_category_id, p_start, p_duration, **p_target** | 引数追加 |
+| `schedule_occurrence_save` | p_template_id, p_date, p_pattern_id, p_name, p_category_id, p_start, p_duration, **p_target** | 引数追加。D に効く世代と時刻の有無が違う保存は拒否 |
+| `schedule_occurrence_delete` | p_template_id, p_date | 日の判定を occurrence_date に |
+| `checkin_set` / `checkin_clear` | 0007 と同じ | done は時刻必須（関数で検査）。done でタップが 0 件なら 1 行（= p_end）。スキップ → やったで skipped_on を外す |
+| `record_tap_add` | p_template_id, p_occurrence_date, p_scheduled_task_id, p_name, p_category_id, p_tapped_at, p_start, p_end, **p_tap_id** | 新規。回の行が無ければ done で作る（時刻つきは予定の時刻）。タップの日は回の日以上・今日以下。p_tap_id = タップの id（アプリが作る。NULL なら DB が作る）。同じ id のタップが既にあれば何もせず成功（再送で冪等。実装後レビュー R5） |
+| `record_tap_remove` | （同じキー）, p_as_of | 新規。p_as_of 以前の最新のタップを消す。0 件で行も消す |
+| `record_skip_set` | （同じキー）, p_name, p_category_id, p_on | 新規。skipped_on = p_on。タップは残す |
+| `record_skip_clear` | （同じキー） | 新規。タップがあれば done（時刻つきは予定の時刻）、無ければ行を消す |
+| `todo_fetch` | p_date, p_from, p_count_from | 新規。やることの節の 1 往復の読み取り（jsonb: singles・overrides・actuals・taps・exdates・day_metas・older_closed） |
+
+- `record_*` は時刻なしの回と、時刻つきで目標 2 以上の回だけが使う。時刻つきで目標 1 の回は今の `checkin_set` / `checkin_clear`（4 本とも拒否する）
 
 ---
 
