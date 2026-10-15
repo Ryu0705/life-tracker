@@ -104,58 +104,21 @@ enum DayBuilder {
             .sorted { $0.visibleRange.start < $1.visibleRange.start }
 
         return Day(date: dayStart, scheduled: mergedScheduled, actual: actuals,
-                   records: context.actualTasks, workoutSetTimes: context.workoutSetTimes.sorted(),
+                   records: context.actualTasks, taps: context.taps, workoutSetTimes: context.workoutSetTimes.sorted(),
                    sleepRecords: context.sleepRecords.sorted { $0.startAt < $1.startAt })
     }
 
-    // MARK: - Mode resolution
+    // MARK: - Mode resolution (規則は OccurrenceRule。TodoBuilder と共有)
 
-    private enum Mode {
-        case doNothing
-        case pattern(UUID)
-        case normal
-    }
+    private typealias Mode = OccurrenceRule.Mode
 
     private static func resolveMode(
         dayStart: Date,
         dayMeta: DayMeta?,
         context: DayBuilderContext
     ) -> Mode {
-        if let dayMeta = dayMeta {
-            if let appliedPatternId = dayMeta.appliedPatternId {
-                return .pattern(appliedPatternId)
-            } else {
-                return .doNothing
-            }
-        }
-
-        if context.holidayChecker(dayStart) {
-            if let holidayPattern = context.patterns.first(where: { $0.applyDay == .holiday }) {
-                return .pattern(holidayPattern.id)
-            }
-            return .normal
-        }
-
-        let weekday = context.calendar.component(.weekday, from: dayStart)
-        if let applyDay = applyDayFromWeekday(weekday),
-           let weekdayPattern = context.patterns.first(where: { $0.applyDay == applyDay }) {
-            return .pattern(weekdayPattern.id)
-        }
-
-        return .normal
-    }
-
-    private static func applyDayFromWeekday(_ weekday: Int) -> Pattern.ApplyDay? {
-        switch weekday {
-        case 1: return .sunday
-        case 2: return .monday
-        case 3: return .tuesday
-        case 4: return .wednesday
-        case 5: return .thursday
-        case 6: return .friday
-        case 7: return .saturday
-        default: return nil
-        }
+        OccurrenceRule.mode(dayStart: dayStart, dayMeta: dayMeta, patterns: context.patterns,
+                            holidayChecker: context.holidayChecker, calendar: context.calendar)
     }
 
     // MARK: - Virtual seed composition (membership 計算なし)
@@ -194,7 +157,7 @@ enum DayBuilder {
 
         case .normal:
             return templates.compactMap { template in
-                guard let rrule = template.rrule, rruleMatches(rrule, on: dayStart, calendar: context.calendar) else {
+                guard let rrule = template.rrule, OccurrenceRule.rruleMatches(rrule, on: dayStart, calendar: context.calendar) else {
                     return nil
                 }
                 return makeVirtualSeed(
@@ -234,7 +197,8 @@ enum DayBuilder {
             startAt: startAt,
             endAt: endAt,
             templateId: template.id,
-            patternId: patternId
+            patternId: patternId,
+            targetCount: template.targetCount
         )
         return VirtualSeed(task: virtualTask, origin: origin)
     }
@@ -311,10 +275,73 @@ enum DayBuilder {
         }
         return (.primary, visibleRange)
     }
+}
+
+/// 系列の回がその日にあるかの規則 (pure)。DayBuilder (時刻つき) と TodoBuilder (時刻なし) の両方が使う
+enum OccurrenceRule {
+    enum Mode: Equatable {
+        case doNothing
+        case pattern(UUID)
+        case normal
+    }
+
+    /// その日の出し方: day_meta (パターン指定／何もしない日) → 祝日 (休日パターン) → 曜日パターン → 通常 (rrule)
+    static func mode(dayStart: Date, dayMeta: DayMeta?, patterns: [Pattern], holidayChecker: (Date) -> Bool,
+                     calendar: Calendar) -> Mode {
+        if let dayMeta = dayMeta {
+            if let appliedPatternId = dayMeta.appliedPatternId {
+                return .pattern(appliedPatternId)
+            } else {
+                return .doNothing
+            }
+        }
+
+        if holidayChecker(dayStart) {
+            if let holidayPattern = patterns.first(where: { $0.applyDay == .holiday }) {
+                return .pattern(holidayPattern.id)
+            }
+            return .normal
+        }
+
+        let weekday = calendar.component(.weekday, from: dayStart)
+        if let applyDay = applyDayFromWeekday(weekday),
+           let weekdayPattern = patterns.first(where: { $0.applyDay == applyDay }) {
+            return .pattern(weekdayPattern.id)
+        }
+
+        return .normal
+    }
+
+    /// 系列の回がその日にあるか (除外日は呼び出し側で見る)。ある = 経由したパターンの id (rrule なら nil) を返す
+    static func occurs(templateId: UUID, rrule: String?, mode: Mode, memberships: [PatternTemplateMembership],
+                       on dayStart: Date, calendar: Calendar) -> (occurs: Bool, patternId: UUID?) {
+        switch mode {
+        case .doNothing:
+            return (false, nil)
+        case .pattern(let patternId):
+            return (memberships.contains { $0.patternId == patternId && $0.templateId == templateId }, patternId)
+        case .normal:
+            guard let rrule else { return (false, nil) }
+            return (rruleMatches(rrule, on: dayStart, calendar: calendar), nil)
+        }
+    }
+
+    private static func applyDayFromWeekday(_ weekday: Int) -> Pattern.ApplyDay? {
+        switch weekday {
+        case 1: return .sunday
+        case 2: return .monday
+        case 3: return .tuesday
+        case 4: return .wednesday
+        case 5: return .thursday
+        case 6: return .friday
+        case 7: return .saturday
+        default: return nil
+        }
+    }
 
     // MARK: - rrule (Phase 1 minimal: FREQ=DAILY, FREQ=WEEKLY;BYDAY=...)
 
-    private static func rruleMatches(_ rrule: String, on dayStart: Date, calendar: Calendar) -> Bool {
+    static func rruleMatches(_ rrule: String, on dayStart: Date, calendar: Calendar) -> Bool {
         let parts = rrule.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }
         var freq: String?
         var byday: [String] = []

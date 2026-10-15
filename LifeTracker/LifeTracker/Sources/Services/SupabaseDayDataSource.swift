@@ -98,6 +98,10 @@ final class SupabaseDayDataSource: DayDataSource {
             sleepResp
         )
 
+        // 回数のタップ (0012。時刻つきで目標 2 以上の回の「1/3」) は別の問い合わせ。失敗 (0012 の無い DB など) は空として扱い、
+        // 睡眠タブ・今日のカードを落とさない (R2)
+        let taps = await fetchTaps(actualIds: actual.map(\.id))
+
         let cal = calendar
         return TemplateVersions.context(
             date: dayStart,
@@ -110,6 +114,7 @@ final class SupabaseDayDataSource: DayDataSource {
             previousDayMeta: dayMetaList.first { cal.isDate($0.date, inSameDayAs: previousDayStart) },
             scheduledTasks: scheduled,
             actualTasks: actual,
+            taps: taps,
             workoutSetTimes: sets.compactMap(\.completedAt),
             sleepRecords: sleep,
             holidayChecker: holidayChecker,
@@ -126,6 +131,30 @@ private struct WorkoutSetTime: Decodable {
     let completedAt: Date?
 }
 
+extension SupabaseDayDataSource {
+    /// 実績のタップ (actual_task_tap)。読めなければ空 (R2)
+    func fetchTaps(actualIds: [UUID]) async -> [ActualTaskTap] {
+        guard !actualIds.isEmpty else { return [] }
+        do {
+            return try await client.from("actual_task_tap")
+                .select()
+                .in("actual_task_id", values: actualIds.map(\.uuidString))
+                .execute()
+                .value
+        } catch {
+            return []
+        }
+    }
+}
+
+/// 「やること」の読み取り (0012 todo_fetch。範囲は Swift が決めて渡す: p_from = V−7、p_count_from = V−366)
+extension SupabaseDayDataSource: TodoDataSource {
+    func loadTodos(date: Date) async throws -> TodoFetch {
+        let call = ScheduleRPC.todoFetch(date: date, calendar: calendar)
+        return try await client.rpc(call.function, params: call.params).execute().value
+    }
+}
+
 extension SupabaseDayDataSource: ScheduleDataSource {
     func fetchCatalog() async throws -> ScheduleCatalog {
         async let categories: [Category] = client.from("category").select().execute().value
@@ -136,16 +165,24 @@ extension SupabaseDayDataSource: ScheduleDataSource {
                                          versionMemberships: memberships)
     }
 
-    /// 1 操作 = 1 RPC (1 トランザクション。D ≥ 今日の検査も関数の中。migration 0006)
+    /// 1 操作 = 1 RPC (1 トランザクション。D ≥ 今日の検査も関数の中。migration 0006)。規則のエラーはメモリ上の実装と同じ型にする (R10)
     func apply(_ operation: ScheduleOperation) async throws {
         let call = ScheduleRPC.call(for: operation, calendar: calendar)
-        try await client.rpc(call.function, params: call.params).execute()
+        do {
+            try await client.rpc(call.function, params: call.params).execute()
+        } catch let error as PostgrestError {
+            throw RuleErrorMapping.schedule(error) ?? error
+        }
     }
 
-    /// 実績の書き込み (1 操作 = 1 RPC。migration 0007)
+    /// 実績の書き込み (1 操作 = 1 RPC。migration 0007・0012)
     func applyCheckIn(_ operation: CheckInOperation) async throws {
         let call = ScheduleRPC.call(for: operation, calendar: calendar)
-        try await client.rpc(call.function, params: call.params).execute()
+        do {
+            try await client.rpc(call.function, params: call.params).execute()
+        } catch let error as PostgrestError {
+            throw RuleErrorMapping.checkIn(error, operation: operation, now: Date(), calendar: calendar) ?? error
+        }
     }
 
     func createCategory(name: String) async throws -> Category {
@@ -206,7 +243,7 @@ private struct SleepRecordWrite: Encodable {
     let kind: SleepKind
 }
 
-/// 操作 → RPC の関数名と引数 (pure。引数名は migration 0006 の関数と同じ)
+/// 操作 → RPC の関数名と引数 (pure。引数名は migration 0006・0007・0012 の関数と同じ)
 enum ScheduleRPC {
     enum Value: Encodable, Equatable {
         case string(String)
@@ -279,18 +316,42 @@ enum ScheduleRPC {
                                         "p_start": time(start), "p_end": time(end)])
         case .deleteActual(let id):
             return make("actual_delete", ["p_id": uuid(id)])
+        case .tap(let k, let name, let categoryId, let at, let start, let end, let tapId):
+            return make("record_tap_add", key(k), [
+                "p_name": .string(name), "p_category_id": uuid(categoryId), "p_tapped_at": time(at),
+                "p_start": time(start), "p_end": time(end), "p_tap_id": uuid(tapId),
+            ])
+        case .untap(let k, let asOf):
+            return make("record_tap_remove", key(k), ["p_as_of": date(asOf)])
+        case .skipCounted(let k, let name, let categoryId, let on):
+            return make("record_skip_set", key(k), ["p_name": .string(name), "p_category_id": uuid(categoryId), "p_on": date(on)])
+        case .unskipCounted(let k):
+            return make("record_skip_clear", key(k))
         }
+    }
+
+    /// todo_fetch の引数 (p_date = V、p_from = V−7、p_count_from = V−366)
+    static func todoFetch(date: Date, calendar: Calendar) -> Call {
+        func day(_ date: Date) -> Value { .string(DateOnly.formatter.string(from: calendar.startOfDay(for: date))) }
+        let range = TodoBuilder.fetchRange(for: date, calendar: calendar)
+        return Call(function: "todo_fetch", params: Params(values: [
+            "p_date": day(date), "p_from": day(range.from), "p_count_from": day(range.countFrom),
+        ]))
     }
 
     static func call(for operation: ScheduleOperation, calendar: Calendar) -> Call {
         func date(_ date: Date) -> Value { .string(DateOnly.formatter.string(from: calendar.startOfDay(for: date))) }
         func uuid(_ id: UUID?) -> Value { id.map { .string($0.uuidString) } ?? .null }
+        /// 時刻なしは p_start・p_duration を null で送る。p_target = 目標の回数 (0012)
         func content(_ c: ScheduleContent) -> [String: Value] {
             ["p_name": .string(c.name), "p_category_id": uuid(c.categoryId),
-             "p_start": .int(c.startMinutes), "p_duration": .int(c.durationMinutes)]
+             "p_start": c.startMinutes.map { .int($0) } ?? .null, "p_duration": c.durationMinutes.map { .int($0) } ?? .null,
+             "p_target": .int(c.targetCount)]
         }
-        func repeatRule(_ r: ScheduleRepeatRule) -> [String: Value] {
-            ["p_rrule": r.rrule.map { .string($0) } ?? .null, "p_show_on_holiday": .bool(r.showsOnHoliday)]
+        /// p_carry_over は時刻なしの繰り返しのときだけ true になり得る (carry_chk)
+        func repeatRule(_ r: ScheduleRepeatRule, _ c: ScheduleContent) -> [String: Value] {
+            ["p_rrule": r.rrule.map { .string($0) } ?? .null, "p_show_on_holiday": .bool(r.showsOnHoliday),
+             "p_carry_over": .bool(!c.timing.isTimed && r.carriesOver)]
         }
         func make(_ function: String, _ parts: [String: Value]...) -> Call {
             Call(function: function, params: Params(values: parts.reduce(into: [:]) { $0.merge($1) { _, new in new } }))
@@ -304,9 +365,9 @@ enum ScheduleRPC {
         case .deleteSingle(let id):
             return make("schedule_single_delete", ["p_id": uuid(id)])
         case .createSeries(let d, let c, let r, let replacing):
-            return make("schedule_template_create", ["p_date": date(d), "p_replace_single_id": uuid(replacing)], content(c), repeatRule(r))
+            return make("schedule_template_create", ["p_date": date(d), "p_replace_single_id": uuid(replacing)], content(c), repeatRule(r, c))
         case .saveFollowing(let t, let d, let c, let r):
-            return make("schedule_template_save_following", ["p_template_id": uuid(t), "p_date": date(d)], content(c), repeatRule(r))
+            return make("schedule_template_save_following", ["p_template_id": uuid(t), "p_date": date(d)], content(c), repeatRule(r, c))
         case .deleteFollowing(let t, let d):
             return make("schedule_template_delete_following", ["p_template_id": uuid(t), "p_date": date(d)])
         case .endSeriesToSingle(let t, let d, let c):
@@ -316,5 +377,49 @@ enum ScheduleRPC {
         case .deleteOccurrence(let t, let d):
             return make("schedule_occurrence_delete", ["p_template_id": uuid(t), "p_date": date(d)])
         }
+    }
+}
+
+/// RPC の RAISE (PostgrestError の message・code) → メモリ上の実装と同じ規則のエラー (pure。R10)。
+/// 文言は migration 0006・0007・0012 の RAISE EXCEPTION と CHECK / FK 制約。対応の無いものは nil (元のエラーのまま)
+enum RuleErrorMapping {
+    static func schedule(_ error: PostgrestError) -> ScheduleRuleError? {
+        let message = error.message
+        if message.hasPrefix("past day is not editable") || message.hasPrefix("timed single needs today or later") { return .pastDay }
+        if message.hasPrefix("single task not found") || message.hasPrefix("occurrence not found") { return .notFound }
+        if message.hasPrefix("closed single cannot change its date") { return .closedSingleDate }
+        if message.hasPrefix("series needs weekdays or holiday") { return .noRepeat }
+        if message.hasPrefix("occurrence cannot change timed/untimed") { return .timingMismatch }
+        // 目標の回数の CHECK (task_template_version_target_chk・scheduled_task_target_chk)
+        if error.code == "23514", message.contains("target_chk") { return .invalidTarget }
+        // 系列を消すときの FK RESTRICT (過去の実体が系列を指している)
+        if error.code == "23503" { return .referencedByPast }
+        return nil
+    }
+
+    static func checkIn(_ error: PostgrestError, operation: CheckInOperation, now: Date, calendar: Calendar) -> CheckInRuleError? {
+        let message = error.message
+        if message.hasPrefix("future occurrence cannot be") || message.hasPrefix("future day cannot be recorded") { return .futureDay }
+        if message.hasPrefix("sleep is recorded in sleep_record") { return .sleepIsSeparate }
+        if message.hasPrefix("done needs start and end") || message.hasPrefix("timed occurrence needs planned start and end") {
+            return .invalidTime
+        }
+        if message.hasPrefix("skipped occurrence cannot be") { return .skippedOccurrence }
+        if message.hasPrefix("timed occurrence with target 1") { return .notCounted }
+        if message.hasPrefix("single task not found") || message.hasPrefix("occurrence not found")
+            || message.hasPrefix("actual not found") { return .notFound }
+        // 「回の日以上・今日以下」は 1 つの文言なので、送った日で未来か回の日より前かを分ける
+        if message.hasPrefix("tap must be between") || message.hasPrefix("skip day must be between") {
+            let sent: Date? = {
+                switch operation {
+                case .tap(_, _, _, let at, _, _, _): return at
+                case .skipCounted(_, _, _, let on): return on
+                default: return nil
+                }
+            }()
+            if let sent, calendar.startOfDay(for: sent) > calendar.startOfDay(for: now) { return .futureDay }
+            return .beforeOccurrence
+        }
+        return nil
     }
 }

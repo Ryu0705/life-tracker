@@ -37,6 +37,8 @@ struct Day {
     let actual: [DayActualTask]
     /// 取得した実績の行そのまま (一覧に出る日が前日か当日。スキップ行を含む)。回の丸の状態・予定外の実績の一覧に使う (段階 2)
     var records: [ActualTask] = []
+    /// records の回数のタップ (時刻つきで目標 2 以上の回の「1/3」に使う。0012)
+    var taps: [ActualTaskTap] = []
     /// 当日に完了したセットの completed_at (昇順)。ジムの回の表示時判定 (段階 2 決定 C4)
     var workoutSetTimes: [Date] = []
     /// 睡眠の記録 (sleep_record。actual には混ぜない)。睡眠の行の 3 行目に SleepRules.assign で結ぶ

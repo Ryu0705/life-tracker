@@ -2,16 +2,21 @@ import SwiftUI
 
 /// 1 回分の予定の追加・編集 (段階 1)。繰り返しは編集画面の 1 項目 (曜日のチップ＋祝日も出す。何も選ばなければ繰り返さない)。
 /// 保存・削除の分岐は SchedulePlanner (pure)。保存は store を直接呼ぶ (シートに async クロージャで値を渡すと値が壊れた前例があるため)。
-/// 段階 2: 下に「実績」欄 (回の日 ≤ 今日のときだけ)。過去日は予定の欄を読むだけ (canEditPlan = false。C-5: 既定値なしの必須引数)
+/// 段階 2: 下に「実績」欄 (回の日 ≤ 今日のときだけ)。過去日は予定の欄を読むだけ (canEditPlan = false。C-5: 既定値なしの必須引数)。
+/// 0012: 「時刻を決める」のオン・オフ (オフ = やること)、「目標の回数」、時刻なしの繰り返しの「終わらなければ翌日にも出す」、
+/// 時刻なしの単発の「日付」。回数の欄 (count) の − ＋・スキップは押したときにすぐ書く (一覧の丸と同じ。AI 既定)
 struct ScheduleEntryEditView: View {
     @ObservedObject var store: ScheduleStore
     let target: ScheduleEditTarget
     /// 一覧で見ている日 (保存後に読み直す日。前日から続く行を開いたときは target.date と違う)
     let visibleDay: Date
-    /// false = 予定の欄は読むだけ (名前・種類・時刻・繰り返し・削除をすべて出さない)。実績欄だけ入力できる
+    /// false = 予定の欄は読むだけ (名前・種類・時刻・繰り返し・削除をすべて出さない)。実績欄だけ入力できる。
+    /// ただし繰り越し中の繰り返しの回 (target.isCarried) は読むだけでも削除を出す (その回だけ。2026-10-15 本人決定 1)
     let canEditPlan: Bool
     /// 実績欄で扱う回。nil = 実績欄を出さない (明日以降・睡眠の行)
     let checkIn: CheckInSlot?
+    /// 回数の欄で扱う回 (時刻なしの回・時刻つきで目標 2 以上の回)。nil = 出さない
+    let count: CountSlot?
 
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
@@ -20,6 +25,13 @@ struct ScheduleEntryEditView: View {
     @State private var endMinutes: Int
     @State private var weekdays: Set<ScheduleWeekday>
     @State private var showsOnHoliday: Bool
+    /// 時刻を決める (オフ = 時刻なしのやること)
+    @State private var isTimed: Bool
+    @State private var targetCount: Int
+    @State private var carriesOver: Bool
+    /// 時刻なしの単発の日 (開いた時点は元の日)
+    @State private var singleDay: Date
+    @State private var isChangingDate = false
     @State private var message: String?
     @State private var isConfirmingDiscard = false
     @State private var isConfirmingDelete = false
@@ -33,18 +45,24 @@ struct ScheduleEntryEditView: View {
     @State private var actualEndMinutes: Int
     @State private var isWorking = false
     private let initialActual: ActualTask?
+    /// 開いた時点の実績の時刻の欄 (0 時からの分)。時刻の無い「やった」(時刻なしの間の記録) は予定の時刻が入る。
+    /// 変更ありの判定はこれと比べる (開いただけで「変更あり」にしない。R9)
+    private let initialActualStartMinutes: Int
+    private let initialActualEndMinutes: Int
 
     /// 実績欄の状態 (記録なし／やった／スキップ)
     enum ActualChoice: Hashable {
         case none, done, skipped
     }
 
-    init(store: ScheduleStore, target: ScheduleEditTarget, visibleDay: Date, canEditPlan: Bool, checkIn: CheckInSlot?) {
+    init(store: ScheduleStore, target: ScheduleEditTarget, visibleDay: Date, canEditPlan: Bool, checkIn: CheckInSlot?,
+         count: CountSlot? = nil) {
         self.store = store
         self.target = target
         self.visibleDay = visibleDay
         self.canEditPlan = canEditPlan
         self.checkIn = checkIn
+        self.count = count
         let calendar = store.calendar
         let state = checkIn.flatMap { slot in store.day(visibleDay).map { store.checkInState(for: slot.row, in: $0) } } ?? .none
         let record = state.record
@@ -58,20 +76,27 @@ struct ScheduleEntryEditView: View {
         // 時刻は実績があればそれ、無ければ予定どおり (「予定の時刻が入った状態から直す」)
         let start = record?.startAt ?? checkIn?.row.task.startAt ?? Date()
         let end = record?.endAt ?? checkIn?.row.task.endAt ?? Date()
-        _actualStartMinutes = State(initialValue: CheckInPlanner.minutesOfDay(start, calendar: calendar))
-        _actualEndMinutes = State(initialValue: CheckInPlanner.minutesOfDay(end, calendar: calendar))
+        initialActualStartMinutes = CheckInPlanner.minutesOfDay(start, calendar: calendar)
+        initialActualEndMinutes = CheckInPlanner.minutesOfDay(end, calendar: calendar)
+        _actualStartMinutes = State(initialValue: initialActualStartMinutes)
+        _actualEndMinutes = State(initialValue: initialActualEndMinutes)
         // 新規の既定: 開いた時刻から一番近いキリのいい時刻 (次の :00 か :30) から 1 時間 (本人指定)・繰り返さない (Google と同じ)・
         // 種類は未選択 (選ぶまで保存できない)
         let input = target.original
         let defaultStart = ScheduleRepeat.defaultStartMinutes(now: Date(), calendar: store.calendar)
         _name = State(initialValue: input?.content.name ?? "")
         _categoryId = State(initialValue: input?.content.categoryId)
-        _startMinutes = State(initialValue: input?.content.startMinutes ?? defaultStart)
-        _endMinutes = State(initialValue: input.map {
-            ScheduleRepeat.endMinutes(startMinutes: $0.content.startMinutes, duration: $0.content.durationMinutes)
-        } ?? ScheduleRepeat.endMinutes(startMinutes: defaultStart, duration: 60))
+        // 時刻なしの予定を時刻ありに切り替えたときの既定は、新規と同じ (次のキリのいい時刻から 1 時間)
+        let planStart = input?.content.startMinutes ?? defaultStart
+        _startMinutes = State(initialValue: planStart)
+        _endMinutes = State(initialValue: ScheduleRepeat.endMinutes(startMinutes: planStart, duration: input?.content.durationMinutes ?? 60))
         _weekdays = State(initialValue: input?.repeatRule.weekdays ?? [])
         _showsOnHoliday = State(initialValue: input?.repeatRule.showsOnHoliday ?? false)
+        // 新規の既定は時刻あり (今と同じ)・目標 1・繰り越さない
+        _isTimed = State(initialValue: input?.content.timing.isTimed ?? true)
+        _targetCount = State(initialValue: input?.content.targetCount ?? 1)
+        _carriesOver = State(initialValue: input?.repeatRule.carriesOver ?? false)
+        _singleDay = State(initialValue: calendar.startOfDay(for: target.occurrenceDate ?? target.date))
     }
 
     private var calendar: Calendar { store.calendar }
@@ -82,14 +107,35 @@ struct ScheduleEntryEditView: View {
     }
 
     private var repeatRule: ScheduleRepeatRule {
-        ScheduleRepeatRule(weekdays: weekdays, showsOnHoliday: showsOnHoliday)
+        // 繰り越しは時刻なしの繰り返しだけ (時刻つきは常にオフで持つ = 元の入力と比べて「変更あり」にしない)
+        ScheduleRepeatRule(weekdays: weekdays, showsOnHoliday: showsOnHoliday, carriesOver: !isTimed && carriesOver)
+    }
+
+    /// ジム・睡眠の種類は目標の回数を出さない (1 固定。AI 既定)
+    private var usesTargetCount: Bool {
+        guard let categoryId else { return true }
+        return store.category(categoryId)?.subInputKind == nil
+    }
+
+    private var timing: ScheduleTiming? {
+        guard isTimed else { return .untimed }
+        guard let duration else { return nil }
+        return .timed(startMinutes: startMinutes, durationMinutes: duration)
+    }
+
+    /// 時刻なしの単発の日の変更 (元の日と同じなら nil)
+    private var changedSingleDay: Date? {
+        guard !isTimed, !repeatRule.isRepeating else { return nil }
+        let original = calendar.startOfDay(for: target.occurrenceDate ?? target.date)
+        return singleDay == original ? nil : singleDay
     }
 
     private var input: ScheduleEntryInput? {
-        guard let categoryId, let duration else { return nil }
+        guard let categoryId, let timing else { return nil }
         return ScheduleEntryInput(
-            content: ScheduleContent(name: name, categoryId: categoryId, startMinutes: startMinutes, durationMinutes: duration),
-            repeatRule: repeatRule
+            content: ScheduleContent(name: name, categoryId: categoryId, timing: timing, targetCount: usesTargetCount ? targetCount : 1),
+            repeatRule: repeatRule,
+            singleDate: changedSingleDay
         )
     }
 
@@ -136,6 +182,15 @@ struct ScheduleEntryEditView: View {
     private var actualChange: ActualChange {
         guard let checkIn, checkIn.workout == nil else { return .unchanged }
         let task = checkIn.row.task
+        if count != nil {
+            // 回数のある回は時刻だけ (回の行が無い・スキップなら何もしない)。今の回の行の時刻 (無ければ予定の時刻) と比べる
+            guard let live = countState?.record, live.status == .done else { return .unchanged }
+            let base = countBaselineMinutes(live)
+            if actualStartMinutes == base.start && actualEndMinutes == base.end { return .unchanged }
+            guard let range = actualRange else { return .invalid }
+            return .apply(.set(key: checkIn.key, status: .done, name: task.name, categoryId: task.categoryId,
+                               start: range.start, end: range.end))
+        }
         switch actualChoice {
         case .none:
             return initialActual == nil ? .unchanged : .apply(.clear(key: checkIn.key))
@@ -144,13 +199,21 @@ struct ScheduleEntryEditView: View {
             return .apply(.set(key: checkIn.key, status: .skipped, name: task.name, categoryId: task.categoryId,
                                start: nil, end: nil))
         case .done:
-            guard let range = actualRange else { return .invalid }
-            if let initial = initialActual, initial.status == .done, initial.startAt == range.start, initial.endAt == range.end {
+            if initialActual?.status == .done, actualStartMinutes == initialActualStartMinutes,
+               actualEndMinutes == initialActualEndMinutes {
                 return .unchanged
             }
+            guard let range = actualRange else { return .invalid }
             return .apply(.set(key: checkIn.key, status: .done, name: task.name, categoryId: task.categoryId,
                                start: range.start, end: range.end))
         }
+    }
+
+    /// 回数のある時刻つきの回の、時刻の欄の基準 (回の行の時刻。時刻の無い行は予定の時刻)
+    private func countBaselineMinutes(_ record: ActualTask?) -> (start: Int, end: Int) {
+        let start = record?.startAt ?? checkIn?.row.task.startAt ?? Date()
+        let end = record?.endAt ?? checkIn?.row.task.endAt ?? Date()
+        return (CheckInPlanner.minutesOfDay(start, calendar: calendar), CheckInPlanner.minutesOfDay(end, calendar: calendar))
     }
 
     /// 実績欄の見出し。前日の回 (前日から続く行) なら日付を出す
@@ -162,16 +225,25 @@ struct ScheduleEntryEditView: View {
 
     private var actualSummary: String {
         guard let range = actualRange else { return "開始と終了を別の時刻にしてください" }
-        let startDay = calendar.startOfDay(for: range.start)
-        let dayNote = startDay == checkIn.map({ $0.occurrenceDay }) ? "" : "\(WorkoutSummary.dayLabel(startDay, calendar: calendar)) "
-        let nextDay = calendar.isDate(range.end, inSameDayAs: range.start) ? "" : "（翌日）"
-        return "\(dayNote)\(ScheduleRepeat.timeText(actualStartMinutes))〜\(ScheduleRepeat.timeText(actualEndMinutes))\(nextDay) · "
-            + CheckInPlanner.durationText(range.start, range.end)
+        return CheckInPlanner.actualRangeSummary(range, occurrenceDay: checkIn?.occurrenceDay, calendar: calendar)
     }
 
     @ViewBuilder
     private func actualSection(_ slot: CheckInSlot) -> some View {
-        if case .workout(let first, let last, let count)? = slot.workout {
+        if count != nil {
+            // 目標 2 以上の時刻つきの回: 状態 (記録なし・スキップ) は回数の欄。実績の時刻は回の行がある (1 回以上) ときだけ直せる
+            if countState?.record?.status == .done {
+                Section {
+                    DatePicker("開始", selection: timeBinding($actualStartMinutes), displayedComponents: .hourAndMinute)
+                    DatePicker("終了", selection: timeBinding($actualEndMinutes), displayedComponents: .hourAndMinute)
+                } header: {
+                    Text(actualHeader + "の時刻")
+                } footer: {
+                    Text(actualSummary)
+                        .foregroundStyle(actualRange == nil ? Color.red : Color.secondary)
+                }
+            }
+        } else if case .workout(let first, let last, let count)? = slot.workout {
             // セットのあるジム: トレーニング記録が正 (実績の行は書かない。決定 C4)
             Section {
                 LabeledContent("状態", value: "やった（トレーニング）")
@@ -185,23 +257,35 @@ struct ScheduleEntryEditView: View {
                 Text("トレーニングの記録から自動で「やった」になります。")
             }
         } else {
-            Section {
-                Picker("状態", selection: $actualChoice) {
-                    Text("記録なし").tag(ActualChoice.none)
-                    Text("やった").tag(ActualChoice.done)
-                    Text("スキップ").tag(ActualChoice.skipped)
+            // 状態の選択肢は置かない: 時刻を入れたら「やった」、スキップはボタン、消す・取り消すで記録なしに戻す
+            // (本人 2026-10-13。「記録なし」を選ぶ操作と、時刻入力との二重の指定をなくす)
+            switch actualChoice {
+            case .none:
+                Section {
+                    Button("実績の時刻を入れる", systemImage: "clock") { actualChoice = .done }
+                    Button("スキップにする", systemImage: "forward") { actualChoice = .skipped }
+                } header: {
+                    Text(actualHeader)
                 }
-                .pickerStyle(.segmented)
-                if actualChoice == .done {
+            case .done:
+                Section {
                     DatePicker("開始", selection: timeBinding($actualStartMinutes), displayedComponents: .hourAndMinute)
                     DatePicker("終了", selection: timeBinding($actualEndMinutes), displayedComponents: .hourAndMinute)
-                }
-            } header: {
-                Text(actualHeader)
-            } footer: {
-                if actualChoice == .done {
+                } header: {
+                    Text(actualHeader + "の時刻")
+                } footer: {
                     Text(actualSummary)
                         .foregroundStyle(actualRange == nil ? Color.red : Color.secondary)
+                }
+                Section {
+                    Button("実績の時刻を消す", role: .destructive) { actualChoice = .none }
+                }
+            case .skipped:
+                Section {
+                    LabeledContent("状態", value: "スキップ")
+                    Button("スキップを取り消す") { actualChoice = .none }
+                } header: {
+                    Text(actualHeader)
                 }
             }
         }
@@ -214,11 +298,97 @@ struct ScheduleEntryEditView: View {
             Section("予定") {
                 LabeledContent("名前", value: original.content.name)
                 LabeledContent("種類", value: store.categoryName(original.content.categoryId) ?? "")
-                LabeledContent("時刻", value: original.content.timeRangeText)
+                LabeledContent("時刻", value: original.content.timing.isTimed ? original.content.timeRangeText : "決めない")
+                if original.content.targetCount >= 2 || !original.content.timing.isTimed {
+                    LabeledContent("目標の回数", value: "\(original.content.targetCount) 回")
+                }
                 LabeledContent("繰り返し", value: original.repeatRule.isRepeating
                                ? ScheduleRepeat.summary(days: original.repeatRule.weekdays, holiday: original.repeatRule.showsOnHoliday)
                                : "繰り返さない")
+                if let count, count.occurrenceDay < calendar.startOfDay(for: visibleDay) {
+                    LabeledContent("回の日", value: "\(WorkoutSummary.dayLabel(count.occurrenceDay, calendar: calendar)) から繰り越し中")
+                }
             }
+        }
+    }
+
+    // MARK: - 回数の欄 (押したときにすぐ書く)
+
+    /// 回数の欄の今の状態 (store の読み込み＋応答前の上書き)。count・スキップ・実績の行
+    private var countState: (count: Int, isSkipped: Bool, record: ActualTask?)? {
+        guard let count else { return nil }
+        if let todo = store.todoDay(visibleDay)?.todos.first(where: { $0.key == count.key }) {
+            // スキップの記録がある回は、見ている日が skipped_on より前でも取り消しだけ (R6)
+            return (todo.count, todo.isSkipRecorded, todo.record)
+        }
+        if let checkIn, let day = store.day(visibleDay) {
+            switch store.checkInState(for: checkIn.row, in: day) {
+            case .progress(let n, _, let record): return (n, false, record)
+            case .skipped(let record): return (0, true, record)
+            default: return (0, false, nil)
+            }
+        }
+        return nil
+    }
+
+    @ViewBuilder
+    private func countSection(_ slot: CountSlot, _ state: (count: Int, isSkipped: Bool, record: ActualTask?)) -> some View {
+        Section {
+            if state.isSkipped {
+                LabeledContent("状態", value: state.record?.skippedOn.map { "スキップ（\(TodoRow.shortDate($0, calendar: calendar))）" } ?? "スキップ")
+                Button("スキップを取り消す") { record(.unskipCounted(key: slot.key)) }
+            } else {
+                // − は見ている日以前の最新のタップを消す。＋ は目標を超えても数える
+                // 見ている日以前のタップが 0 件なら − は押せない (onDecrement nil)
+                Stepper(
+                    label: { Text("回数 \(state.count)/\(slot.target)").monospacedDigit() },
+                    onIncrement: {
+                        record(.tap(key: slot.key, name: slot.name, categoryId: slot.categoryId,
+                                    at: CheckInPlanner.tapTime(viewDay: visibleDay, now: Date(), calendar: calendar),
+                                    plannedStart: slot.plannedStart, plannedEnd: slot.plannedEnd))
+                    },
+                    // 時刻つきの回は全部のタップの中で最新を消す (数え方と揃える。日をまたぐ回。R12)。時刻なしは見ている日以前の最新
+                    onDecrement: state.count > 0
+                        ? { record(.untap(key: slot.key, asOf: slot.isTimed ? Date() : visibleDay)) } : nil
+                )
+                .disabled(isWorking)
+                Button("スキップにする", systemImage: "forward") {
+                    record(.skipCounted(key: slot.key, name: slot.name, categoryId: slot.categoryId, on: visibleDay))
+                }
+                .disabled(isWorking)
+            }
+        } header: {
+            Text(countHeader(slot))
+        } footer: {
+            if state.count >= slot.target && !state.isSkipped {
+                Text("目標に届きました。")
+            }
+        }
+    }
+
+    /// 終わった (目標に届いた・スキップした) 時刻なしの単発か (見ている日の時点)
+    private var isClosedSingle: Bool {
+        guard case .single = target.kind, target.original?.content.timing.isTimed == false, let state = countState else { return false }
+        return state.isSkipped || state.count >= (count?.target ?? 1)
+    }
+
+    /// 元の日が今日より前の、終わった時刻なしの単発。時刻ありへは切り替えられない (SQL の単発の検査で拒否される。
+    /// 保存して初めてエラーになる形にしないため、トグルを押せなくする。2026-10-14 リード指示)
+    private var cannotSwitchToTimed: Bool {
+        isClosedSingle && calendar.startOfDay(for: target.occurrenceDate ?? target.date) < calendar.startOfDay(for: Date())
+    }
+
+    private func countHeader(_ slot: CountSlot) -> String {
+        guard slot.occurrenceDay != calendar.startOfDay(for: visibleDay) else { return "回数" }
+        return "回数（\(WorkoutSummary.dayLabel(slot.occurrenceDay, calendar: calendar)) の回）"
+    }
+
+    private func record(_ operation: CheckInOperation) {
+        Task {
+            isWorking = true
+            let error = await store.checkIn(operation, reloading: visibleDay)
+            isWorking = false
+            message = error.map { "記録できませんでした: \($0.localizedDescription)" }
         }
     }
 
@@ -238,10 +408,13 @@ struct ScheduleEntryEditView: View {
                 if canEditPlan {
                     planSections
                 }
+                if let count, let state = countState {
+                    countSection(count, state)
+                }
                 if let checkIn {
                     actualSection(checkIn)
                 }
-                if canEditPlan && !target.isNew {
+                if (canEditPlan || target.isCarried) && !target.isNew {
                     Section {
                         Button("削除", role: .destructive) { isConfirmingDelete = true }
                             .frame(maxWidth: .infinity)
@@ -261,6 +434,17 @@ struct ScheduleEntryEditView: View {
             .modifier(dialogs)
             .onChange(of: input) { message = nil }
             .onChange(of: actualChoice) { message = nil }
+            .onChange(of: countState?.record?.id) {
+                // 回数の欄で回の行ができた・消えたら、時刻の欄を今の行 (無ければ予定) に合わせる (前の実績の時刻を残さない。R9)
+                guard count != nil else { return }
+                let base = countBaselineMinutes(countState?.record)
+                actualStartMinutes = base.start
+                actualEndMinutes = base.end
+            }
+            .onChange(of: isTimed) { _, timed in
+                // 時刻なしでは睡眠の種類を選べない
+                if !timed, let categoryId, store.category(categoryId)?.subInputKind == .sleep { self.categoryId = nil }
+            }
             .task { if !store.isCatalogLoaded { await store.loadCatalog() } }
         }
     }
@@ -274,7 +458,8 @@ struct ScheduleEntryEditView: View {
         Section {
             Picker("種類", selection: $categoryId) {
                 if categoryId == nil { Text("選ぶ").tag(UUID?.none) }
-                ForEach(store.categories) { category in
+                // 時刻なしのときは睡眠を外す (睡眠は時刻つきの予定だけ)
+                ForEach(store.categories.filter { isTimed || $0.subInputKind != .sleep }) { category in
                     Text(category.name).tag(UUID?.some(category.id))
                 }
             }
@@ -286,17 +471,42 @@ struct ScheduleEntryEditView: View {
             Text("予実をまとめて見る単位です（例: 「勉強」に PMBOK と資格の勉強をまとめる）。")
         }
         Section {
-            DatePicker("開始", selection: timeBinding($startMinutes), displayedComponents: .hourAndMinute)
-            DatePicker("終了", selection: timeBinding($endMinutes), displayedComponents: .hourAndMinute)
+            Toggle("時刻を決める", isOn: $isTimed)
+                .disabled(cannotSwitchToTimed && !isTimed)
+            if isTimed {
+                DatePicker("開始", selection: timeBinding($startMinutes), displayedComponents: .hourAndMinute)
+                DatePicker("終了", selection: timeBinding($endMinutes), displayedComponents: .hourAndMinute)
+            }
         } header: {
             Text("時刻")
         } footer: {
-            Text(timeSummary)
-                .foregroundStyle(duration == nil ? Color.red : Color.secondary)
+            if isTimed {
+                Text(timeSummary)
+                    .foregroundStyle(duration == nil ? Color.red : Color.secondary)
+            } else if cannotSwitchToTimed {
+                Text("終わった単発は時刻を決められません。")
+            } else {
+                Text("時刻を決めない「やること」になります。一覧の下の「やること」に出ます。")
+            }
+        }
+        if usesTargetCount {
+            Section {
+                Stepper(value: $targetCount, in: 1...99) {
+                    Text("目標の回数 \(targetCount) 回").monospacedDigit()
+                }
+            } footer: {
+                Text(targetCount >= 2 ? "丸を押すたびに 1 回ずつ数えます。" : "1 回やったら完了です。")
+            }
+        }
+        if !isTimed && !repeatRule.isRepeating {
+            singleDateSection
         }
         Section {
             WeekdayChips(selection: $weekdays)
             Toggle("祝日も出す", isOn: $showsOnHoliday)
+            if !isTimed && repeatRule.isRepeating {
+                Toggle("終わらなければ翌日にも出す", isOn: $carriesOver)
+            }
         } header: {
             Text("繰り返し")
         } footer: {
@@ -304,8 +514,46 @@ struct ScheduleEntryEditView: View {
         }
     }
 
+    /// 時刻なしの単発の日。繰り越し中は「10/10 から繰り越し中」と「日付を変える」(今日以降)。閉じた単発の日付は変えられない (AI 既定)
+    @ViewBuilder
+    private var singleDateSection: some View {
+        let today = calendar.startOfDay(for: Date())
+        let original = calendar.startOfDay(for: target.occurrenceDate ?? target.date)
+        let isClosed = isClosedSingle
+        Section {
+            if isClosed && !target.isNew {
+                // 終わった単発は元の日だけ (繰り越さないので「から繰り越し中」・脚注は出さない)
+                LabeledContent("日付", value: WorkoutSummary.dayLabel(original, calendar: calendar))
+            } else if original < today && !isChangingDate {
+                LabeledContent("日付", value: "\(WorkoutSummary.dayLabel(original, calendar: calendar)) から繰り越し中")
+                Button("日付を変える") {
+                    singleDay = today
+                    isChangingDate = true
+                }
+            } else {
+                DatePicker("日付", selection: $singleDay, in: today..., displayedComponents: .date)
+            }
+        } footer: {
+            if !(isClosed && !target.isNew) {
+                Text("終わるまで翌日以降にも出ます。")
+            }
+        }
+    }
+
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        if canEditPlan || checkIn != nil {
+            editingToolbar
+        } else {
+            // 読むだけ＋回数欄 (繰り越し中の繰り返しの回など): 回数欄はすぐ書くので保存するものが無い
+            ToolbarItem(placement: .confirmationAction) {
+                Button("閉じる") { dismiss() }
+            }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var editingToolbar: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) {
             Button("キャンセル") {
                 if hasChanges {
@@ -387,11 +635,13 @@ struct ScheduleEntryEditView: View {
     }
 
     private var deleteDialogTitle: String {
-        target.isOccurrence ? "繰り返しの予定を削除" : "この予定を削除しますか？"
+        // 繰り越し中の回は「これ以降」を出さずその回だけ消すので、単発と同じ問いにする (AI 既定)
+        target.isOccurrence && !target.isCarried ? "繰り返しの予定を削除" : "この予定を削除しますか？"
     }
 
     private var usualText: String {
         guard let usual = target.usual else { return "この日だけ変更済み" }
+        if !usual.timing.isTimed { return "この日だけ変更済み（いつもは \(usual.name)・\(usual.targetCount) 回）" }
         return "この日だけ変更済み（いつもは \(usual.timeRangeText)）"
     }
 
@@ -410,7 +660,10 @@ struct ScheduleEntryEditView: View {
             return target.isOccurrence ? "繰り返しをやめます。この日の予定は残ります。" : "繰り返さない（この日だけ）"
         }
         var lines = ["出る日: " + ScheduleRepeat.summary(days: rule.weekdays, holiday: rule.showsOnHoliday)]
-        if target.isOccurrence, rule != target.original?.repeatRule {
+        if !isTimed {
+            lines.append(rule.carriesOver ? "終わらなければ翌日以降にも出ます（7 日まで）" : "その日に終わらなければ翌日には出ません")
+        }
+        if target.isOccurrence, rule != target.original?.repeatRule || isTimed != target.original?.content.timing.isTimed {
             lines.append("これ以降のすべての予定が変わります")
         }
         let isHoliday = store.holidayChecker

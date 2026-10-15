@@ -117,7 +117,6 @@ struct SleepRecordSheet: View {
                     Picker("種別", selection: $kind) {
                         ForEach(SleepKind.allCases) { Text($0.label).tag($0) }
                     }
-                    .pickerStyle(.segmented)
                 }
                 if target.choosesWakeDay && editing == nil {
                     Section {

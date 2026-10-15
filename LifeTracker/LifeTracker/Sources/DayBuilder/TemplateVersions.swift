@@ -13,29 +13,42 @@ enum TemplateVersions {
     ) -> (templates: [TaskTemplate], memberships: [PatternTemplateMembership]) {
         let effective = effectiveVersions(versions: versions, on: date, calendar: calendar)
         let byVersion = Dictionary(grouping: memberships, by: \.versionId)
-        let templates = effective.map(\.template)
+        let templates = effective.compactMap(\.timedTemplate)
         let resolved = effective.flatMap { version in
             (byVersion[version.id] ?? []).map { PatternTemplateMembership(patternId: $0.patternId, templateId: version.templateId) }
         }
         return (templates, resolved)
     }
 
-    /// その日に効く世代 (is_ended を除く)。並びは系列の最初の世代の順ではなく、名前順で安定させる
-    static func effectiveVersions(versions: [TaskTemplateVersion], on date: Date, calendar: Calendar) -> [TaskTemplateVersion] {
+    /// 系列ごとのその日の最新の世代 (is_ended を除く。時刻の有無を問わない)。
+    /// 先に時刻の有無で絞らない: 時刻なしへ切り替えた後に古い時刻ありの世代が選ばれて復活するため (計画 2-1・レビュー重大 1)
+    static func latestVersions(versions: [TaskTemplateVersion], on date: Date, calendar: Calendar) -> [TaskTemplateVersion] {
         let day = calendar.startOfDay(for: date)
         var latest: [UUID: TaskTemplateVersion] = [:]
         for version in versions where calendar.startOfDay(for: version.effectiveFrom) <= day {
             if let current = latest[version.templateId], current.effectiveFrom >= version.effectiveFrom { continue }
             latest[version.templateId] = version
         }
-        return latest.values
-            .filter { !$0.isEnded }
-            .sorted { ($0.startMinutesFromMidnight, $0.name, $0.templateId.uuidString) < ($1.startMinutesFromMidnight, $1.name, $1.templateId.uuidString) }
+        return latest.values.filter { !$0.isEnded }
     }
 
-    /// 1 系列のその日に効く世代 (is_ended なら nil)
+    /// その日に効く時刻つきの世代 (is_ended を除く)。並びは系列の最初の世代の順ではなく、名前順で安定させる
+    static func effectiveVersions(versions: [TaskTemplateVersion], on date: Date, calendar: Calendar) -> [TaskTemplateVersion] {
+        latestVersions(versions: versions, on: date, calendar: calendar)
+            .filter { $0.timing.isTimed }
+            .sorted { ($0.startMinutesFromMidnight ?? 0, $0.name, $0.templateId.uuidString) < ($1.startMinutesFromMidnight ?? 0, $1.name, $1.templateId.uuidString) }
+    }
+
+    /// その日に効く時刻なしの世代 (やること。is_ended を除く)
+    static func effectiveTodoVersions(versions: [TaskTemplateVersion], on date: Date, calendar: Calendar) -> [TaskTemplateVersion] {
+        latestVersions(versions: versions, on: date, calendar: calendar)
+            .filter { !$0.timing.isTimed }
+            .sorted { ($0.name, $0.templateId.uuidString) < ($1.name, $1.templateId.uuidString) }
+    }
+
+    /// 1 系列のその日に効く世代 (時刻の有無を問わない。is_ended なら nil)
     static func effectiveVersion(templateId: UUID, versions: [TaskTemplateVersion], on date: Date, calendar: Calendar) -> TaskTemplateVersion? {
-        effectiveVersions(versions: versions.filter { $0.templateId == templateId }, on: date, calendar: calendar).first
+        latestVersions(versions: versions.filter { $0.templateId == templateId }, on: date, calendar: calendar).first
     }
 
     /// DayBuilder への入力 (当日分と前日分を別に解決する。レビュー DB §3-2)
@@ -50,6 +63,7 @@ enum TemplateVersions {
         previousDayMeta: DayMeta?,
         scheduledTasks: [ScheduledTask],
         actualTasks: [ActualTask],
+        taps: [ActualTaskTap] = [],
         workoutSetTimes: [Date] = [],
         sleepRecords: [SleepRecord] = [],
         holidayChecker: @escaping (Date) -> Bool,
@@ -71,6 +85,7 @@ enum TemplateVersions {
             previousDayMeta: previousDayMeta,
             scheduledTasks: scheduledTasks,
             actualTasks: actualTasks,
+            taps: taps,
             workoutSetTimes: workoutSetTimes,
             sleepRecords: sleepRecords,
             holidayChecker: holidayChecker,

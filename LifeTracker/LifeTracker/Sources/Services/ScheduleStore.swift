@@ -2,7 +2,8 @@ import Foundation
 import Combine
 
 /// 「予定」タブの読み取り (日単位のキャッシュ) と書き込み。docs/day-cycle-walkthrough.md「段階 1 確定仕様」「段階 2 確定仕様」。
-/// 実績 (チェックイン) は楽観更新＋回ごとの直列化 (レビュー §5-3): 丸を押した瞬間に表示を変え、同じ回への続く操作は前の応答を待って順に送る
+/// 実績 (チェックイン) は楽観更新＋回ごとの直列化 (レビュー §5-3): 丸を押した瞬間に表示を変え、同じ回への続く操作は前の応答を待って順に送る。
+/// 「やること」(時刻なしの回。0012) は loadDayContext と並列で TodoDataSource から読み、日ごとに持つ (失敗はやることの節だけに出す)
 @MainActor
 final class ScheduleStore: ObservableObject {
     /// 日 (0 時) → 組み立て済みの日。切り替え時に前の日の行を見せないよう、日ごとに持つ (UI U-10)
@@ -15,11 +16,25 @@ final class ScheduleStore: ObservableObject {
     @Published var listMessage: String?
     /// 応答前の実績の表示 (回ごと)。読み直しで反映されたら外す
     @Published private(set) var overrides: [CheckInKey: CheckInOverride] = [:]
+    /// 日 (0 時) → その日の「やること」(組み立て済み。楽観更新は todoDay(_:) で重ねる)
+    @Published private(set) var todoDays: [Date: TodoDay] = [:]
+    @Published private(set) var todoErrors: [Date: String] = [:]
+    /// 応答前の回数の表示 (回ごと。足した／消したタップ・スキップ)。表示する日ごとに数え直す (計画 2-4)
+    @Published private(set) var tapAdjustments: [CheckInKey: TapAdjustment] = [:]
+    /// 回数を書いた日のやることの行の並び (キーの順)。再描画までは行を元の位置に残す (本人決定 2026-10-14
+    /// 「再描画までは、行を元の位置に残す。」)。日を移る・タブを開き直す・読み直す (再試行・引っ張って更新・予定の保存や削除) で外す
+    @Published private(set) var pinnedTodoOrder: PinnedTodoOrder?
+
+    struct PinnedTodoOrder: Equatable {
+        let day: Date
+        let keys: [CheckInKey]
+    }
 
     let calendar: Calendar
     let holidayChecker: (Date) -> Bool
     private let dayDataSource: DayDataSource
     private let dataSource: ScheduleDataSource
+    private let todoDataSource: TodoDataSource?
     private var loadingDays: Set<Date> = []
     /// 書き込みのたびに進める。書き込み前に始まった読み込みの結果を捨てる
     private var generation = 0
@@ -29,11 +44,18 @@ final class ScheduleStore: ObservableObject {
     private var checkInSerials: [CheckInKey: Int] = [:]
     /// 上書きを外してよくなった世代 (この世代以降に始まった読み込みが反映されたら外す)
     private var overrideSettledAt: [CheckInKey: Int] = [:]
+    /// 上書きを外す読み込み元 (時刻つきの回 = 日の読み込み、やることの回 = todo_fetch。R4)
+    private enum LoadSource { case day, todo }
+    private var overrideSources: [CheckInKey: LoadSource] = [:]
+    /// 回 (直列化の列) ごとの、最後に並べた操作が回数の操作か (R11)
+    private var checkInChainCounted: [AnyHashable: Bool] = [:]
 
-    init(dayDataSource: DayDataSource, dataSource: ScheduleDataSource, calendar: Calendar,
+    /// todoDataSource を省くと dataSource が TodoDataSource ならそれを使う (無ければ「やること」は出ない)
+    init(dayDataSource: DayDataSource, dataSource: ScheduleDataSource, todoDataSource: TodoDataSource? = nil, calendar: Calendar,
          holidayChecker: @escaping (Date) -> Bool) {
         self.dayDataSource = dayDataSource
         self.dataSource = dataSource
+        self.todoDataSource = todoDataSource ?? (dataSource as? TodoDataSource)
         self.calendar = calendar
         self.holidayChecker = holidayChecker
     }
@@ -41,6 +63,33 @@ final class ScheduleStore: ObservableObject {
     func key(_ date: Date) -> Date { calendar.startOfDay(for: date) }
 
     func day(_ date: Date) -> Day? { days[key(date)] }
+
+    /// その日の「やること」(応答前の回数の上書きを重ね、並べ直した形)。まだ読んでいない・読めなかったら nil
+    /// 回数を書いた日は、並びを組み直さず覚えた順のまま中身だけ差し替える (新しく現れた行は末尾、消えた行は消す)
+    func todoDay(_ date: Date) -> TodoDay? {
+        guard var todoDay = todoDays[key(date)] else { return nil }
+        if !tapAdjustments.isEmpty {
+            todoDay.todos = TodoBuilder.sorted(todoDay.todos.map {
+                $0.adjusted(by: tapAdjustments[$0.key], asOf: todoDay.date, calendar: calendar)
+            })
+        }
+        if let pin = pinnedTodoOrder, pin.day == todoDay.date {
+            todoDay.todos = Self.arranged(todoDay.todos, by: pin.keys)
+        }
+        return todoDay
+    }
+
+    /// keys の順に並べ、keys に無い行は (組み立ての並びのまま) 末尾に足す
+    static func arranged(_ todos: [DayTodo], by keys: [CheckInKey]) -> [DayTodo] {
+        let position = Dictionary(keys.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        let pinned = todos.filter { position[$0.key] != nil }.sorted { position[$0.key]! < position[$1.key]! }
+        return pinned + todos.filter { position[$0.key] == nil }
+    }
+
+    /// 覚えた並びを外す (日を移ったとき。読み直し・タブを開き直したときは store が自分で外す)
+    func releaseTodoOrder() {
+        pinnedTodoOrder = nil
+    }
 
     var categories: [Category] {
         catalog.categories.sorted { $0.name < $1.name }
@@ -70,27 +119,65 @@ final class ScheduleStore: ObservableObject {
 
     /// 再試行・引っぱって更新
     func reload(_ date: Date) async {
+        pinnedTodoOrder = nil
         await loadCatalog()
         await load(key(date))
     }
 
+    /// 時刻つきの日 (loadDayContext) と「やること」(loadTodos) を並列で読む。時刻つきの日は届いた時点で出し、todo_fetch を待たない (R3)。
+    /// やることの失敗は todoErrors だけに出す (前の内容は残さない。R4)
     private func load(_ day: Date) async {
         loadingDays.insert(day)
         defer { loadingDays.remove(day) }
         let started = generation
+        let todoSource = todoDataSource
+        async let todoResult = Self.loadTodos(todoSource, date: day)
         do {
             let context = try await dayDataSource.loadDayContext(date: day)
-            guard started == generation else { return }
-            days[day] = DayBuilder.build(date: day, context: context)
-            dayErrors[day] = nil
-            // この読み込みより前に確定した実績の上書きは、読み込んだ中身に入っている
-            for (key, settled) in overrideSettledAt where settled <= started {
-                overrides[key] = nil
-                overrideSettledAt[key] = nil
+            if started == generation {
+                days[day] = DayBuilder.build(date: day, context: context)
+                dayErrors[day] = nil
+                settleOverrides(.day, startedAt: started)
             }
         } catch {
-            guard started == generation, !WorkoutSessionStore.isCancellation(error) else { return }
-            dayErrors[day] = error.localizedDescription
+            if started == generation, !WorkoutSessionStore.isCancellation(error) {
+                dayErrors[day] = error.localizedDescription
+            }
+        }
+        let todos = await todoResult
+        guard started == generation else { return }
+        switch todos {
+        case .success(let fetch)?:
+            todoDays[day] = TodoBuilder.build(date: day, versions: catalog.versions, versionMemberships: catalog.versionMemberships,
+                                              patterns: catalog.patterns, fetch: fetch, holidayChecker: holidayChecker,
+                                              calendar: calendar)
+            todoErrors[day] = nil
+            settleOverrides(.todo, startedAt: started)
+        case .failure(let error)?:
+            guard !WorkoutSessionStore.isCancellation(error) else { return }
+            todoDays[day] = nil
+            todoErrors[day] = error.localizedDescription
+        case nil:
+            break
+        }
+    }
+
+    /// この読み込みより前に確定した上書きは、読み込んだ中身に入っている。読み込み元が同じものだけ外す (R4)
+    private func settleOverrides(_ source: LoadSource, startedAt started: Int) {
+        for (key, settled) in overrideSettledAt where settled <= started && (overrideSources[key] ?? .day) == source {
+            overrides[key] = nil
+            tapAdjustments[key] = nil
+            overrideSettledAt[key] = nil
+            overrideSources[key] = nil
+        }
+    }
+
+    nonisolated private static func loadTodos(_ source: TodoDataSource?, date: Date) async -> Result<TodoFetch, Error>? {
+        guard let source else { return nil }
+        do {
+            return .success(try await source.loadTodos(date: date))
+        } catch {
+            return .failure(error)
         }
     }
 
@@ -122,10 +209,10 @@ final class ScheduleStore: ObservableObject {
         }
     }
 
-    /// 保存できない条件は「名前が空」「開始＝終了」だけ (曜日も祝日もなし = 繰り返さない、として保存できる)
+    /// 保存できない条件は「名前が空」「開始＝終了」(時刻つき) だけ (曜日も祝日もなし = 繰り返さない、として保存できる)
     nonisolated static func validate(_ input: ScheduleEntryInput) -> SaveError? {
         if input.content.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .emptyName }
-        if input.content.durationMinutes <= 0 { return .zeroDuration }
+        if case .timed(_, let duration) = input.content.timing, duration <= 0 { return .zeroDuration }
         return nil
     }
 
@@ -135,6 +222,7 @@ final class ScheduleStore: ObservableObject {
         // 2 度目を黙って成功扱いにしない (レビュー §5-3)
         guard !isSaving else { return SaveError.busy }
         isSaving = true
+        pinnedTodoOrder = nil
         defer { isSaving = false }
         var failure: Error?
         do {
@@ -147,6 +235,9 @@ final class ScheduleStore: ObservableObject {
         let kept = days[visible]
         days = kept.map { [visible: $0] } ?? [:]
         dayErrors = [:]
+        let keptTodos = todoDays[visible]
+        todoDays = keptTodos.map { [visible: $0] } ?? [:]
+        todoErrors = [:]
         await loadCatalog()
         await load(visible)
         return failure
@@ -175,12 +266,22 @@ final class ScheduleStore: ObservableObject {
     /// 回の丸の状態 (上書き → 読み込んだ実績の順。セットのあるジムが最優先)
     func checkInState(for row: DayScheduledTask, in day: Day) -> CheckInState {
         CheckInPlanner.state(for: row, records: day.records, overrides: overrides, category: category(row.task.categoryId),
-                             workoutSetTimes: CheckInPlanner.workoutSets(for: row, day: day, calendar: calendar), calendar: calendar)
+                             workoutSetTimes: CheckInPlanner.workoutSets(for: row, day: day, calendar: calendar), calendar: calendar,
+                             taps: day.taps, adjustments: tapAdjustments)
     }
 
-    /// 一覧の行 (予定の回＋予定外の実績、時刻順)
+    /// 一覧の行 (予定の回＋予定外の実績、時刻順)。やることの回の実績は予定外に出さない
     func listItems(_ day: Day) -> [ScheduleListItem] {
-        CheckInPlanner.listItems(day: day, calendar: calendar)
+        CheckInPlanner.listItems(day: day, calendar: calendar, todoKeys: todoDays[day.date]?.keys ?? [])
+    }
+
+    /// 読み込み済みのタップ (回数の楽観更新で「どのタップを消すか」を決めるため)
+    private func knownTaps(for key: CheckInKey, on visible: Date) -> [ActualTaskTap] {
+        if let todo = todoDays[visible]?.todos.first(where: { $0.key == key }) { return todo.taps }
+        guard let day = days[visible], let record = day.records.first(where: { CheckInKey.of($0, calendar: calendar) == key }) else {
+            return []
+        }
+        return day.taps.filter { $0.actualTaskId == record.id }
     }
 
     /// 実績を書き込む。回の操作は先に表示を変え (楽観更新)、同じ回の前の操作の応答を待ってから送る。
@@ -201,12 +302,31 @@ final class ScheduleStore: ObservableObject {
             serial = (key, number)
             overrides[key] = override
             overrideSettledAt[key] = nil
+            overrideSources[key] = .day
+        } else if operation.isCounted, let key = operation.key {
+            // 押した直後は並びを組み直さない (今見えている順を覚える。同じ日で続けて押したら最初の順のまま)
+            if pinnedTodoOrder?.day != visible {
+                pinnedTodoOrder = todoDay(visible).map { PinnedTodoOrder(day: visible, keys: $0.todos.map(\.key)) }
+            }
+            // 回数は数でなくタップで先に見せる (同じ回が複数の日に出るため)
+            let number = (checkInSerials[key] ?? 0) + 1
+            checkInSerials[key] = number
+            serial = (key, number)
+            tapAdjustments[key] = TapAdjustment.applying(operation, to: tapAdjustments[key] ?? TapAdjustment(),
+                                                         taps: knownTaps(for: key, on: visible), calendar: calendar)
+            overrideSettledAt[key] = nil
+            overrideSources[key] = todoDays[visible]?.todos.contains { $0.key == key } == true ? .todo : .day
         }
         let chainKey: AnyHashable = serial.map { AnyHashable($0.key) } ?? AnyHashable("actual")
         let previous = checkInChains[chainKey]
+        let previousCounted = checkInChainCounted[chainKey] ?? false
+        checkInChainCounted[chainKey] = operation.isCounted
+        let isCounted = operation.isCounted
         let dataSource = self.dataSource
         let task = Task<Error?, Never> {
-            _ = await previous?.value
+            let previousFailure = await previous?.value
+            // 同じ回の前の回数の操作が失敗したら、後に並んだ回数の操作は送らない (楽観の分は下で戻す。R11)
+            if isCounted, previousCounted, let previousFailure { return previousFailure }
             do {
                 try await dataSource.applyCheckIn(operation)
                 return nil
@@ -216,19 +336,30 @@ final class ScheduleStore: ObservableObject {
         }
         checkInChains[chainKey] = task
         let failure = await task.value
-        if checkInChains[chainKey] == task { checkInChains[chainKey] = nil }
+        if checkInChains[chainKey] == task {
+            checkInChains[chainKey] = nil
+            checkInChainCounted[chainKey] = nil
+        }
 
         generation += 1
         if let serial, checkInSerials[serial.key] == serial.number {
             if failure != nil {
                 overrides[serial.key] = nil
+                tapAdjustments[serial.key] = nil
+                overrideSources[serial.key] = nil
             } else {
                 overrideSettledAt[serial.key] = generation
             }
         }
-        // 実績は前日・翌日の一覧にも出る (前日から続く行・一覧に出る日) ので、隣の日のキャッシュは捨てる
-        for offset in [-1, 1] {
-            if let other = calendar.date(byAdding: .day, value: offset, to: visible) { days[other] = nil }
+        if operation.isCounted {
+            // 回数の記録は繰り越しで何日も先の一覧に出るので、見ている日以外のキャッシュは全部捨てる (設計書 重大 4)
+            days = days.filter { $0.key == visible }
+            todoDays = todoDays.filter { $0.key == visible }
+        } else {
+            // 実績は前日・翌日の一覧にも出る (前日から続く行・一覧に出る日) ので、隣の日のキャッシュは捨てる
+            for offset in [-1, 1] {
+                if let other = calendar.date(byAdding: .day, value: offset, to: visible) { days[other] = nil; todoDays[other] = nil }
+            }
         }
         await load(visible)
         return failure
@@ -242,7 +373,7 @@ final class ScheduleStore: ObservableObject {
             return .set(key: k, status: st, name: trim(n), categoryId: c, start: s, end: e)
         case .saveActual(let id, let n, let c, let s, let e):
             return .saveActual(id: id, name: trim(n), categoryId: c, start: s, end: e)
-        case .clear, .deleteActual:
+        case .clear, .deleteActual, .tap, .untap, .skipCounted, .unskipCounted:
             return operation
         }
     }
@@ -252,8 +383,11 @@ final class ScheduleStore: ObservableObject {
     /// 読み込み中は前の内容を見せたまま
     func refresh(_ date: Date) async {
         let day = key(date)
+        pinnedTodoOrder = nil
         days = days.filter { $0.key == day }
         dayErrors = dayErrors.filter { $0.key == day }
+        todoDays = todoDays.filter { $0.key == day }
+        todoErrors = todoErrors.filter { $0.key == day }
         guard days[day] != nil, !loadingDays.contains(day) else { return }
         await load(day)
     }

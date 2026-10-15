@@ -14,6 +14,8 @@ struct DayBuilderContext {
     let scheduledTasks: [ScheduledTask]
     /// 実績。段階 2 からは「一覧に出る日が前日か当日」の行 (occurrence_date IN (D-1, D))。スキップ行 (時刻なし) も含む
     let actualTasks: [ActualTask]
+    /// actualTasks の回数のタップ (0012。時刻つきで目標 2 以上の回の回数)
+    let taps: [ActualTaskTap]
     /// 当日 (JST) に完了したトレーニングのセットの completed_at。ジムの回の表示時判定に使う (段階 2 決定 C4)
     let workoutSetTimes: [Date]
     /// 睡眠の記録 (sleep_record)。[D−1 0:00, D+2 0:00) に重なるもの。睡眠の行との結びは表示時 (SleepRules.assign)
@@ -33,6 +35,7 @@ struct DayBuilderContext {
         previousDayMeta: DayMeta? = nil,
         scheduledTasks: [ScheduledTask],
         actualTasks: [ActualTask],
+        taps: [ActualTaskTap] = [],
         workoutSetTimes: [Date] = [],
         sleepRecords: [SleepRecord] = [],
         holidayChecker: @escaping (Date) -> Bool,
@@ -49,6 +52,7 @@ struct DayBuilderContext {
         self.previousDayMeta = previousDayMeta
         self.scheduledTasks = scheduledTasks
         self.actualTasks = actualTasks
+        self.taps = taps
         self.workoutSetTimes = workoutSetTimes
         self.sleepRecords = sleepRecords
         self.holidayChecker = holidayChecker

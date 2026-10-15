@@ -565,6 +565,7 @@ struct ScheduleRPCTests {
             "p_template_id": .string(t.uuidString), "p_date": .string("2026-10-05"), "p_name": .string("ジム"),
             "p_category_id": .string(c.uuidString), "p_start": .int(405), "p_duration": .int(45),
             "p_rrule": .string("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"), "p_show_on_holiday": .bool(true),
+            "p_target": .int(1), "p_carry_over": .bool(false),
         ])
         let names: [ScheduleOperation: String] = [
             .createSingle(date: S1.date(10, 5), content: content): "schedule_single_save",
@@ -589,8 +590,8 @@ struct ScheduleRPCTests {
         #expect(json?["p_rrule"] is NSNull)
         #expect(json?["p_replace_single_id"] is NSNull)
         #expect(json?["p_show_on_holiday"] as? Bool == true)
-        #expect(json?.keys.sorted() == ["p_category_id", "p_date", "p_duration", "p_name", "p_replace_single_id",
-                                        "p_rrule", "p_show_on_holiday", "p_start"])
+        #expect(json?.keys.sorted() == ["p_carry_over", "p_category_id", "p_date", "p_duration", "p_name", "p_replace_single_id",
+                                        "p_rrule", "p_show_on_holiday", "p_start", "p_target"])
     }
 }
 

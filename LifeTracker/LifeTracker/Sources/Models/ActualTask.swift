@@ -19,9 +19,11 @@ struct ActualTask: Codable, Identifiable, Hashable {
     /// 一覧に出る日 (JST 0 時)。繰り返しの回はその回の日、単発は単発の日、予定外は開始の日
     var occurrenceDate: Date
     var scheduledTaskId: UUID?
+    /// スキップした日 (0012)。nil = 時刻つきの間にしたスキップ (回の日に閉じたとみなす)。status = skipped のときだけ
+    var skippedOn: Date?
 
     init(id: UUID, name: String, categoryId: UUID, startAt: Date?, endAt: Date?, status: Status = .done,
-         templateId: UUID? = nil, occurrenceDate: Date? = nil, scheduledTaskId: UUID? = nil) {
+         templateId: UUID? = nil, occurrenceDate: Date? = nil, scheduledTaskId: UUID? = nil, skippedOn: Date? = nil) {
         self.id = id
         self.name = name
         self.categoryId = categoryId
@@ -32,6 +34,7 @@ struct ActualTask: Codable, Identifiable, Hashable {
         // 省略時は開始の JST 日 (段階 1 までの呼び出し・テスト向け)
         self.occurrenceDate = occurrenceDate ?? Self.jstDay(startAt ?? Date())
         self.scheduledTaskId = scheduledTaskId
+        self.skippedOn = skippedOn
     }
 
     /// 予定外の実績 (回につながっていない)
@@ -44,7 +47,7 @@ struct ActualTask: Codable, Identifiable, Hashable {
     // MARK: - Codable (occurrence_date は DATE。睡眠は actual_task に持たない = sleep_record。docs/sleep-design)
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, categoryId, startAt, endAt, status, templateId, occurrenceDate, scheduledTaskId
+        case id, name, categoryId, startAt, endAt, status, templateId, occurrenceDate, scheduledTaskId, skippedOn
     }
 
     init(from decoder: Decoder) throws {
@@ -58,6 +61,7 @@ struct ActualTask: Codable, Identifiable, Hashable {
         templateId = try c.decodeIfPresent(UUID.self, forKey: .templateId)
         occurrenceDate = try c.decode(DateOnly.self, forKey: .occurrenceDate).wrappedValue
         scheduledTaskId = try c.decodeIfPresent(UUID.self, forKey: .scheduledTaskId)
+        skippedOn = try c.decodeIfPresent(DateOnly.self, forKey: .skippedOn)?.wrappedValue
     }
 
     func encode(to encoder: Encoder) throws {
@@ -71,5 +75,13 @@ struct ActualTask: Codable, Identifiable, Hashable {
         try c.encode(templateId, forKey: .templateId)
         try c.encode(DateOnly(wrappedValue: occurrenceDate), forKey: .occurrenceDate)
         try c.encode(scheduledTaskId, forKey: .scheduledTaskId)
+        try c.encode(skippedOn.map { DateOnly(wrappedValue: $0) }, forKey: .skippedOn)
     }
+}
+
+/// 回数のタップ 1 回 (actual_task_tap。0012)。回の実績 actual_task の子。回数 = 行数、− は新しい方から消す
+struct ActualTaskTap: Codable, Identifiable, Hashable {
+    let id: UUID
+    let actualTaskId: UUID
+    let tappedAt: Date
 }
