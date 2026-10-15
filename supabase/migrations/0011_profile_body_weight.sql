@@ -8,7 +8,7 @@
 -- 体重は日付つきの独立した表にする (体重の推移・食事を後から足しても体重データの移行が要らない形。本人 2026-10-07)。
 -- 同じ日は上書き (upsert onConflict: recorded_on)。JST の日は端末で計算する (@DateOnly と同じ規約)。
 -- 年齢は生年月日から計算する (保存しない)。RLS は既存の表と同じく無効のまま (8/31 からの未決を引き継ぐ)
--- 0012 (task_template の旧列・pattern_template_membership の削除) とは独立
+-- 0013 (task_template の旧列・pattern_template_membership の削除) とは独立
 -- 冪等: 何度流しても同じ状態になる (IF NOT EXISTS)
 
 -- ============================================================
