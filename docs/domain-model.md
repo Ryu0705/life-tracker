@@ -6,7 +6,7 @@
 > - 休日パターン（apply_day = Holiday）は常に 1 件ある前提（0006 で固定。アプリは作らない）。第 1 世代の effective_from = 2026-04-26 は近似
 > - 未来日表示は前倒し（spec.md）
 
-> **2026-10-14 追記（時刻のないやること・目標の回数。migration 0012、本番未適用。下の「時刻のないやること・目標の回数」の節）**
+> **2026-10-14 追記（時刻のないやること・目標の回数。migration 0012、2026-10-15 本番適用済み。下の「時刻のないやること・目標の回数」の節）**
 > - 予定の時刻を持たなくてよくなった（`task_template_version`・`scheduled_task` の時刻の列は NULL 可。両方あるか両方 NULL）。すべての予定が目標の回数 `target_count`（1〜99、既定 1）を持つ。繰り越し `carry_over` は時刻なしの繰り返しだけ
 > - `scheduled_task` に回の日 `occurrence_date`（時刻つきは開始の JST 日）と `created_at` を足し、同じ系列の同じ日の一意索引を `(template_id, occurrence_date)` に置き換えた。日の判定は start_at でなくこの列
 > - 回数はタップ 1 回 = 1 行の `actual_task_tap`。閉じた日（目標の回数目のタップの日とスキップした日の早い方）は保存しない
@@ -281,7 +281,7 @@ CREATE INDEX workout_set_exercise_idx ON workout_set (exercise_id);
 
 ## 時刻のないやること・目標の回数 (migration 0012・2026-10-14)
 
-正の定義は `supabase/migrations/0012_untimed_tasks.sql`（apply 名 `v2_untimed_tasks`。本番未適用）。ここは 0012 で変わったところだけを抜き出したもの。規則の原本は Swift（`InMemoryScheduleDataSource`・`CountProgress`・`TodoBuilder`）で、SQL はその写し。
+正の定義は `supabase/migrations/0012_untimed_tasks.sql`（apply 名 `v2_untimed_tasks`。2026-10-15 本番適用済み・version 20261015034314）。ここは 0012 で変わったところだけを抜き出したもの。規則の原本は Swift（`InMemoryScheduleDataSource`・`CountProgress`・`TodoBuilder`）で、SQL はその写し。
 
 ```sql
 -- 世代: 時刻は NULL 可 (時刻なし)。目標の回数と繰り越し

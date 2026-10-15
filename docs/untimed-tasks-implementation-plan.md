@@ -1,4 +1,4 @@
-# 時刻のないやること 実装計画（2026-10-14・opus レビュー 2 回反映済み・本人 OK「実装へ」2026-10-14 → 実装済み・未 commit・本番未適用）
+# 時刻のないやること 実装計画（2026-10-14・opus レビュー 2 回反映済み・本人 OK「実装へ」2026-10-14 → 実装済み・2026-10-15 commit・2026-10-15 12:43 本番適用済み）
 
 土台: `docs/untimed-tasks-design.md`（要件 1〜8・データの決定 1〜6・レビュー結果）。食い違う所は設計書の本人決定が正、細部はこのファイルが正。
 
@@ -179,8 +179,28 @@ GRANT: 新しい関数と作り直した関数を anon・authenticated に。内
 - 単発 → 繰り返し（template_create の p_replace_single_id）は、実績をつなぎ直す前に単発の検査（削除と同じ）を通す。今日より前に閉じた時刻なしの単発は変えられない／繰り越し中・今日閉じた単発は変えられ、記録は今日の回へ移る（Swift エージェントが発見）
 - InMemory と SQL の突き合わせで揃えた細部: 世代が終了した日は回が無い（タップ・スキップ拒否）／回が見つからないときの目標は 1／その日だけの保存で効く世代が無い日は時刻の有無を検査しない／目標 1〜99 の外は丸めず拒否／時刻あり→なしの単発は created_at を残す／todo_fetch の actuals・older_closed は時刻なしの回だけ
 
-## 本番適用の手順（2026-10-14 作成。本番には未適用。本人 OK の後に行う）
+## 本番適用の手順（2026-10-14 作成。2026-10-15 12:43 本番適用済み）
 - 本人 OK（2026-10-15 11:17 原文「commitしてOK。DBへの変更も入れて良い」）。commit・push の後にこの手順で当てる
+- 経過（2026-10-15）: commit・push 済み（b572531 db・9dfc5fe ios・ae76100 docs、`feat/round3-training`）。事前の確認は全部期待どおり（接続先 hyngpesrmqodiegonoze・適用済みは v2_profile_body_weight まで・private スキーマ 0 行・public の既定の権限の r に anon と authenticated・sleep_record に anon の権限 true）。適用前の件数: scheduled_task 1・task_template 4・世代 7・actual_task 2（回につながる done 1・skipped 0）・sleep_record 6。MCP `apply_migration` は「cancelled」で返り、本番は変わっていない（migration の行なし・private スキーマなし・occurrence_date 列なし を読み取りで確認）。本人に確認する → 本人「もう一度流して」で流し直す → 2 回目も「cancelled」で、本番は変わっていない（読み取りで確認）
+- 分かったこと（2026-10-15 11:33・事実）: MCP では DROP を含む文は、無いものを消す `DROP FUNCTION IF EXISTS public.lt_probe_does_not_exist_20261015()`（何も変わらない）でも「cancelled」になる。SELECT は通る。Supabase MCP の説明には「破壊的な文は実行の前に利用者の確認を求めることがある」とある。0012 は DROP FUNCTION・DROP INDEX・DROP CONSTRAINT を含む。推測（未確認）: 確認の画面が出ないまま取り消されている（10/10 の 0011 は DROP を含まず通った）
+- 本人の選択（2026-10-15 11:35）: 「auto モードを切って MCP で再試行」（選ばなかったもの: 本人が SQL エディタに貼って流す（AI 推奨））
+- 3 回目（2026-10-15 11:39、auto モードを切った後・本人「流して」）も「cancelled」。本番は変わっていない（読み取りで確認）。auto モードは原因ではなかった。確認の画面が出たかは本人に確認中
+- 原因の切り分け（2026-10-15 11:45 本人「単純にselectだけで流してみて 原因が知りたい」）。事実:
+  - `SELECT 1`・文字列の中の DROP（`SELECT 'DROP FUNCTION x'`）・コメントの中の DROP は通る → MCP は文字の一致でなく文の種類で判定している
+  - Claude Code の MCP のログ（`~/Library/Caches/claude-cli-nodejs/-Users-yamashitaryuunosuke-life/mcp-logs-supabase-personal/`）: cancelled になった 4 回とも、Supabase のサーバーが確認の要求（`elicitation/create`、mode form、「This SQL includes destructive operations (DROP, DELETE, TRUNCATE or UPDATE without WHERE). … Apply the migration to project hyngpesrmqodiegonoze?」、入力欄なし）を送り、Claude Code のログは「Elicitation request received during initialization」。その 0.2 秒ほど後に tool が終わっている（人が答えられる時間ではない）＝確認の画面を出さずに Claude Code 側で取り消している
+  - Claude Code 2.1.300。PreToolUse の hook は supabase の tool に当たらない（matcher に無い）
+  - Claude Code の資料（code.claude.com/docs/en/mcp.md・hooks.md。エージェントが調べた）: MCP の確認の要求（elicitation）は設定なしで画面が出る、と書いてある。出さずに答える手段は `Elicitation` の hook だけで、本人の設定（~/.claude・~/life/.claude）に Elicitation の hook は無い。「received during initialization」のログの意味は資料に無い
+  - 推測（未確認）: Claude Code 側の不具合で、確認の要求を受ける準備ができていない扱いになり、画面を出さずに取り消している
+- 本人が `/mcp` で supabase-personal をつなぎ直した（「Authentication successful. Reconnected」）後、本人「retry」で 2 回流した（2026-10-15）:
+  - ログは「Received elicitation request」に変わり（つなぎ直す前は「… during initialization」）、確認の画面が出るようになった＝つなぎ直しで直った（事実はログの文言の変化と、承認が届いたこと）
+  - 1 回目: 12:01 ごろ呼んで、承認（accept）が届いたのは 12:26:57（約 25 分後）→「Invalid or expired requestState」（ProtocolError）
+  - 2 回目: 12:29:54 に確認の要求、承認が届いたのは 12:39:56（約 10 分後）→ 同じく「Invalid or expired requestState」
+  - どちらも本番は変わっていない（読み取りで確認）。Supabase 側の確認の有効期限は分からない（10 分より短い）
+- **適用（2026-10-15 12:43、本人「すぐ承認するから流して」→ 確認の画面ですぐ承認）**: MCP `apply_migration` `v2_untimed_tasks` 成功（version 20261015034314。中身は commit b572531 の 0012 全文）
+  - 適用後の確認（下の「適用後に確かめる」）はすべて期待どおり: 回の日のずれ 0・created_at の NULL 0・回につながる done 1 = タップ 1・制約 10/10 検査済み・同じ名前の関数の重なり 0・actual_task_tap の RLS 無効・権限すべて true（tap_table・todo_fetch・tap_add・private_usage・nested_call・carried_call）・public に内部の関数 0・時刻なしの世代 0・実体 0
+  - 件数は適用前と同じ（scheduled_task 1・task_template 4・世代 7・actual_task 2・sleep_record 6）。`NOTIFY pgrst, 'reload schema'` 済み
+  - アプリと同じ REST キーで: `rpc/todo_fetch` 200（7 つの配列とも 0 件）・`actual_task_tap` 200・`rpc/todo_closed_on`（private）は PGRST202 で API から呼べない
+  - 残り: 本人が新ビルドを実機に入れる → 下の「新ビルドで確かめる」（予定タブ・睡眠タブ・今日のカード）→ それから時刻なしを作る
 対象は Supabase の ref `hyngpesrmqodiegonoze`。0012 は使い捨ての Postgres 16 ＋ PostgREST で検証 1〜7 が通っている（`day-cycle-walkthrough.md`「時刻のないやること」の検証）。下の確認のクエリも、使い捨て DB（Supabase と同じ既定の権限のスタブ）で 0012 の前後に流し、期待どおりの結果になることを確かめた（2026-10-14。`schema_migrations` は Supabase にだけあるので除く）。
 
 ### 順序（前提の「本番の順序」と同じ）

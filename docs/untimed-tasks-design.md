@@ -1,6 +1,6 @@
 # 時刻のないやること（やることリスト）の扱い
 
-状態: 実装済み（2026-10-14・本番未適用・未 commit）。実装計画は `docs/untimed-tasks-implementation-plan.md`（opus レビュー反映済み 2026-10-14。closed_on 列は作らずタップ・目標・skipped_on から求める形に変更）。規則のまとめは `day-cycle-walkthrough.md`「時刻のないやること」、DDL は `domain-model.md`
+状態: 実装済み（2026-10-14）・commit 済み（2026-10-15）・本番適用済み（2026-10-15 12:43）。実装計画は `docs/untimed-tasks-implementation-plan.md`（opus レビュー反映済み 2026-10-14。closed_on 列は作らずタップ・目標・skipped_on から求める形に変更）。規則のまとめは `day-cycle-walkthrough.md`「時刻のないやること」、DDL は `domain-model.md`
 
 ## 本人の要望（原文）
 - 2026-10-13「時間設定のあるものと時間設定のないやることリストみたいなものをどちらも扱えるようにしたい。UIを今のまま保つかは検討するが。」
