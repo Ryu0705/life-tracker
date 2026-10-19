@@ -69,18 +69,22 @@ struct TodayExerciseCard: View {
         } header: {
             HStack {
                 Button(action: onOpenExercise) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 4) {
-                            Text(exercise.name)
-                                .font(.headline)
-                            Image(systemName: "chart.line.uptrend.xyaxis")
-                                .font(.caption)
-                        }
-                        if let headline = WorkoutSummary.cardHeadline(kind: exercise.metricKind, todaySets: completed,
-                                                                      previousSets: store.previousSets(for: card)) {
-                            Text(headline)
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(Color.secondary)
+                    HStack(spacing: 10) {
+                        // 種目の画像 (部位の図は 44pt では読めないので出さない・2026-10-15)
+                        ExerciseImageView(exercise: exercise, size: 44)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 4) {
+                                Text(exercise.name)
+                                    .font(.headline)
+                                Image(systemName: "chart.line.uptrend.xyaxis")
+                                    .font(.caption)
+                            }
+                            if let headline = WorkoutSummary.cardHeadline(kind: exercise.metricKind, todaySets: completed,
+                                                                          previousSets: store.previousSets(for: card)) {
+                                Text(headline)
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(Color.secondary)
+                            }
                         }
                     }
                 }

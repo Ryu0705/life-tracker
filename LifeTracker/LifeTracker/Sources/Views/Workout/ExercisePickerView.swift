@@ -46,9 +46,16 @@ struct ExercisePickerView: View {
                             selected.append(exercise.id)
                         }
                     } label: {
-                        HStack {
-                            Text(exercise.name)
-                                .foregroundStyle(Color.primary)
+                        // 左に種目の画像と部位の図 (2026-10-15 本人決定・参考画像 IMG_2199)。部位名は名前の下へ
+                        HStack(spacing: 12) {
+                            ExerciseImageView(exercise: exercise, size: 64, showsMuscle: true)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(exercise.name)
+                                    .foregroundStyle(Color.primary)
+                                Text(todayCounts[exercise.id].map { "追加済み（\($0)）" } ?? exercise.muscleGroup.displayName)
+                                    .font(.caption)
+                                    .foregroundStyle(Color.secondary)
+                            }
                             Spacer()
                             if let index = selected.firstIndex(of: exercise.id) {
                                 Text("\(index + 1)")
@@ -56,12 +63,9 @@ struct ExercisePickerView: View {
                                     .foregroundStyle(.white)
                                     .frame(width: 28, height: 28)
                                     .background(Circle().fill(Color.accentColor))
-                            } else {
-                                Text(todayCounts[exercise.id].map { "追加済み（\($0)）" } ?? exercise.muscleGroup.displayName)
-                                    .font(.caption)
-                                    .foregroundStyle(Color.secondary)
                             }
                         }
+                        .padding(.vertical, 6)
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
                     }

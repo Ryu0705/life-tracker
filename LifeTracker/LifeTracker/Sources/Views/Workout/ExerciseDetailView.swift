@@ -7,6 +7,13 @@ struct ExerciseDetailView: View {
 
     var body: some View {
         List {
+            // 種目の画像は記録の有無に関係なく一番上に出す (2026-10-15 本人決定)
+            Section {
+                ExerciseImageView(exercise: exercise, size: 320)
+                    .frame(maxWidth: .infinity)
+            }
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets())
             if store.history[exercise.id] == nil {
                 ProgressView()
             } else if store.daily(for: exercise.id).isEmpty {

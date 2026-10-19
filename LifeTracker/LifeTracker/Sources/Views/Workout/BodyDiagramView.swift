@@ -49,6 +49,14 @@ struct BodyDiagramView: View {
         BodyDiagramPaths.masks.filter { $0.front == front && $0.female == female }.compactMap { Self.shapes[$0.id] }
     }
 
+    /// 部位 1 つの形 (viewBox の座標)。種目の画像に重ねる部位の図 (MuscleBadge) が使う
+    static func paths(for muscle: Exercise.MuscleGroup, front: Bool, female: Bool = false) -> [Path] {
+        BodyDiagramPaths.masks.filter { $0.front == front && $0.female == female }
+            .compactMap { shapes[$0.id] }
+            .filter { $0.muscle == muscle }
+            .map(\.path)
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             figure(front: true, title: "前")
