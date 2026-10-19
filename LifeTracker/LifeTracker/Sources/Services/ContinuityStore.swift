@@ -3,7 +3,7 @@ import Combine
 import WidgetKit
 
 /// 継続の元データ (トレーニングした日の全期間と、週の目標回数の履歴)。
-/// 連続日数・リングは保存せず、表示のたびに Continuity で計算する (docs/continuity-design.md)。
+/// 連続週数・リングは保存せず、表示のたびに Continuity で計算する (docs/continuity-design.md)。
 /// 今日の分は今日の store のセットから合成する (記録・削除のたびに DB を読み直さない)
 @MainActor
 final class ContinuityStore: ObservableObject {

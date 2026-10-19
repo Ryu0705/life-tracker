@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 週帯 (月〜日)。トレーニング実施日の閲覧専用: 点は「記録がある日」の事実だけ (連続日数・ヒートマップは ContinuityRow と分析画面が受け持つ)。
+/// 週帯 (月〜日)。トレーニング実施日の閲覧専用: 点は「記録がある日」の事実だけ (連続週数・ヒートマップは ContinuityRow と分析画面が受け持つ)。
 /// 「予定」タブも同じ部品を使う (allowsFuture = true で未来の日・次の週へ移れる)。選んでいる日は連動しない
 struct WeekStripView: View {
     let selectedDay: Date

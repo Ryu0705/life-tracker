@@ -104,7 +104,7 @@ struct ContinuityPage: View {
     }
 }
 
-/// 継続: 連続日数・今週の回数と、ヒートマップ (見出しの横で 1 か月｜半年を切り替える。docs/continuity-design.md)
+/// 継続: 連続週数・今週の回数と、ヒートマップ (見出しの横で 1 か月｜半年を切り替える。docs/continuity-design.md)
 struct AnalysisContinuitySection: View {
     @ObservedObject var store: WorkoutSessionStore
     @ObservedObject var historyStore: WorkoutHistoryStore
@@ -119,7 +119,7 @@ struct AnalysisContinuitySection: View {
         Section {
             if let status = continuity.status(today: today, recordedToday: !store.sets.isEmpty) {
                 HStack(spacing: 10) {
-                    StreakLabel(days: status.streakDays)
+                    StreakLabel(weeks: status.streakWeeks)
                     WeekRing(status: status, lineWidth: 3)
                         .frame(width: 18, height: 18)
                     Text(ContinuityRow.weekText(status))

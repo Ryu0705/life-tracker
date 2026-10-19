@@ -23,8 +23,8 @@ struct StreakProvider: TimelineProvider {
     }
 
     func placeholder(in context: Context) -> StreakEntry {
-        StreakEntry(date: Date(), status: ContinuityStatus(streakDays: 45, weekCount: 2, weekTarget: 4,
-                                                           weekDone: [true, false, true, false, false, false, false], daysLeftInWeek: 4))
+        StreakEntry(date: Date(), status: ContinuityStatus(streakWeeks: 6, weekCount: 2, weekTarget: 4,
+                                                            weekDone: [true, false, true, false, false, false, false], daysLeftInWeek: 4))
     }
 
     func getSnapshot(in context: Context, completion: @escaping (StreakEntry) -> Void) {
@@ -69,7 +69,7 @@ struct StreakWidgetView: View {
 
     private func small(_ status: ContinuityStatus) -> some View {
         VStack(spacing: 8) {
-            StreakLabel(days: status.streakDays, font: .title2.bold())
+            StreakLabel(weeks: status.streakWeeks, font: .title2.bold())
             ZStack {
                 WeekRing(status: status, lineWidth: 7)
                 Text("\(status.weekCount)/\(status.weekTarget)")
@@ -91,7 +91,7 @@ struct StreakWidgetView: View {
             }
             .frame(width: 80, height: 80)
             VStack(alignment: .leading, spacing: 8) {
-                StreakLabel(days: status.streakDays, font: .title2.bold())
+                StreakLabel(weeks: status.streakWeeks, font: .title2.bold())
                 WeekDots(status: status, size: 16)
                 Text(weekCaption(status))
                     .font(.caption)
@@ -113,7 +113,7 @@ struct StreakWidget: Widget {
             StreakWidgetView(entry: entry)
         }
         .configurationDisplayName("トレーニングの継続")
-        .description("連続日数と、今週の目標回数までの進み具合")
+        .description("目標に届いた週の連続と、今週の目標回数までの進み具合")
         .supportedFamilies([.systemSmall, .systemMedium])
     }
 }

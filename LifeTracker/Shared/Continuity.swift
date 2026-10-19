@@ -6,10 +6,10 @@ nonisolated struct WeeklyGoal: Codable, Hashable {
     var effectiveFrom: Date
 }
 
-/// 継続の表示 (連続日数・今週のリング・今週 7 日の点)
+/// 継続の表示 (連続週数・今週のリング・今週 7 日の点)
 nonisolated struct ContinuityStatus: Equatable {
-    /// 連続日数 = 連続している週の中でトレーニングした日の数 (休息日は数えない・途切れもしない)。0 = 連続なし
-    let streakDays: Int
+    /// 連続週数 = 前週から遡って目標を満たした週が続いた数 + 今週が目標に届いていれば 1。0 = 連続なし
+    let streakWeeks: Int
     let weekCount: Int
     let weekTarget: Int
     /// 今週の月〜日にトレーニングした日があるか (7 要素)
@@ -24,7 +24,7 @@ nonisolated struct ContinuityStatus: Equatable {
 
 /// 週 N 回の目標を基準にした継続の計算。pure (アプリとウィジェットで共有)。
 /// 週は月曜始まり。目標を満たした週が続くかぎり休息日で途切れず (数えもしない)、N 回に届かず週が終わった時点で途切れる。
-/// 2026-10-10 本人変更: 連続日数は休息日を含む暦日数ではなく、トレーニングした日の数
+/// 2026-10-16 本人変更: 連続は日数ではなく、目標を満たした週の数 (日数だと前週が未達のとき今週の回数と同じ数字になる)
 nonisolated enum Continuity {
     static func weekStart(containing day: Date, calendar: Calendar) -> Date {
         let start = calendar.startOfDay(for: day)
@@ -46,23 +46,22 @@ nonisolated enum Continuity {
         let days = trainingDays.map { calendar.startOfDay(for: $0) }.filter { $0 <= todayKey }
         let byWeek = Dictionary(grouping: days) { weekStart(containing: $0, calendar: calendar) }.mapValues { Set($0) }
 
-        // 前週から遡って、目標を満たした週が続く最古の週を探す (前週が未達なら今週が起点)
-        var chainStart = currentWeek
+        // 前週から遡って、目標を満たした週が続く数を数える (前週が未達なら 0)。今週は目標に届いた時点で 1 足す
+        var achievedWeeks = 0
         var week = calendar.date(byAdding: .day, value: -7, to: currentWeek)!
         let oldest = days.min() ?? todayKey
         while week >= weekStart(containing: oldest, calendar: calendar),
               let target = target(forWeek: week, goals: goals),
               (byWeek[week]?.count ?? 0) >= target {
-            chainStart = week
+            achievedWeeks += 1
             week = calendar.date(byAdding: .day, value: -7, to: week)!
         }
-        let streakDays = Set(days.filter { $0 >= chainStart }).count
 
         let weekDays = (0..<7).map { calendar.date(byAdding: .day, value: $0, to: currentWeek)! }
         let thisWeek = byWeek[currentWeek] ?? []
         let daysLeft = weekDays.filter { $0 >= todayKey }.count
         return ContinuityStatus(
-            streakDays: streakDays,
+            streakWeeks: achievedWeeks + (thisWeek.count >= currentTarget ? 1 : 0),
             weekCount: thisWeek.count,
             weekTarget: currentTarget,
             weekDone: weekDays.map { thisWeek.contains($0) },

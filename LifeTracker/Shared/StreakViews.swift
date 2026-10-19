@@ -17,16 +17,16 @@ nonisolated struct WeekRing: View {
     }
 }
 
-/// 「🔥 45日」。連続なしは灰色の炎と 0
+/// 「🔥 3週」(目標を満たした週の連続)。連続なしは灰色の炎と 0
 nonisolated struct StreakLabel: View {
-    let days: Int
+    let weeks: Int
     var font: Font = .headline
 
     var body: some View {
         HStack(spacing: 2) {
             Image(systemName: "flame.fill")
-                .foregroundStyle(days > 0 ? Color.orange : Color.secondary)
-            Text("\(days)日")
+                .foregroundStyle(weeks > 0 ? Color.orange : Color.secondary)
+            Text("\(weeks)週")
                 .monospacedDigit()
         }
         .font(font)

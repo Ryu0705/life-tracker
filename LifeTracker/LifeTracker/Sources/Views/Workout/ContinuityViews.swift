@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// トレーニング画面の週帯の上の 1 行: 「🔥 45日  ◔ 今週 2/4 · あと2回」。タップで週の目標回数を変える。
+/// トレーニング画面の週帯の上の 1 行: 「🔥 3週  ◔ 今週 2/4 · あと2回」。タップで週の目標回数を変える。
 /// 目標が未設定なら設定への入口だけを出す (docs/continuity-design.md)
 struct ContinuityRow: View {
     let status: ContinuityStatus?
@@ -10,7 +10,7 @@ struct ContinuityRow: View {
         Button(action: onTap) {
             HStack(spacing: 10) {
                 if let status {
-                    StreakLabel(days: status.streakDays, font: .subheadline.bold())
+                    StreakLabel(weeks: status.streakWeeks, font: .subheadline.bold())
                     WeekRing(status: status, lineWidth: 3)
                         .frame(width: 18, height: 18)
                     Text(Self.weekText(status))
@@ -31,7 +31,7 @@ struct ContinuityRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(status.map { "連続 \($0.streakDays)日、\(Self.weekText($0))。目標回数を変更" } ?? "週の目標回数を決める")
+        .accessibilityLabel(status.map { "連続 \($0.streakWeeks)週、\(Self.weekText($0))。目標回数を変更" } ?? "週の目標回数を決める")
     }
 
     static func weekText(_ status: ContinuityStatus) -> String {
@@ -72,7 +72,7 @@ struct WeeklyGoalSheet: View {
                     if let message {
                         Text(message).foregroundStyle(.red)
                     } else {
-                        Text("今週から適用します。週 \(target) 回に届いていれば、休みの日があっても連続は途切れません。月〜日で \(target) 回に届かずに週が終わると、連続が 0 に戻ります。")
+                        Text("今週から適用します。週 \(target) 回に届いた週が何週続いたかを連続として数えます。休みの日があっても途切れず、月〜日で \(target) 回に届かずに週が終わると 0 に戻ります。")
                     }
                 }
             }

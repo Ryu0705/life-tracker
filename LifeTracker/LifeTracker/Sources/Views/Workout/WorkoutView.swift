@@ -8,7 +8,7 @@ struct WorkoutView: View {
     @StateObject private var historyStore: WorkoutHistoryStore
     /// 自分で組んだプログラム。今日の store とは別に持ち、今日の下書きに触れない
     @StateObject private var programStore: ProgramStore
-    /// 継続 (週 N 回基準の連続日数・今週のリング)。ウィジェットへの受け渡しもここから
+    /// 継続 (週 N 回基準の連続週数・今週のリング)。ウィジェットへの受け渡しもここから
     @StateObject private var continuity: ContinuityStore
     @StateObject private var profileStore: ProfileStore
     @State private var isEditingGoal = false
@@ -164,7 +164,7 @@ struct WorkoutView: View {
                 continuity.share(today: today, recordedToday: !store.sets.isEmpty)
             }
         }
-        // 今日の最初の記録・最後の削除と目標の変更で、ウィジェットの連続日数を更新する
+        // 今日の最初の記録・最後の削除と目標の変更で、ウィジェットの連続週数・今週の回数を更新する
         .onChange(of: store.sets.isEmpty) { continuity.share(today: today, recordedToday: !store.sets.isEmpty) }
         .onChange(of: continuity.goals) { continuity.share(today: today, recordedToday: !store.sets.isEmpty) }
         .task(id: toast) {

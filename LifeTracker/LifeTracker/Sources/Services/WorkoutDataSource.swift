@@ -51,7 +51,7 @@ protocol WorkoutDataSource {
     /// 1 リクエスト上限 (PostgREST max-rows 1000) を越えないよう実装側でページングする
     func fetchSets(completedFrom from: Date, to: Date) async throws -> [WorkoutSet]
 
-    /// トレーニングした日 (completed_at の JST 暦日) の全期間。連続日数の計算用 (view workout_training_day)
+    /// トレーニングした日 (completed_at の JST 暦日) の全期間。連続週数の計算用 (view workout_training_day)
     func fetchTrainingDays() async throws -> Set<Date>
     /// 週の目標回数の履歴 (effective_from 順)
     func fetchWeeklyGoals() async throws -> [WeeklyGoal]
