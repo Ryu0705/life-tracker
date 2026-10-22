@@ -14,7 +14,7 @@
 ## AI が決めた既定（本人未確認。違えば直す）
 | 論点 | 既定 | 理由 |
 |---|---|---|
-| トレーニングした日の定義 | その日（completed_at の JST 暦日）にセットが 1 つでもある日。ウォームアップだけの日も含む | 日の基準を既存（週帯の点）と揃える |
+| トレーニングした日の定義 | その日にセットが 1 つでもある日。ウォームアップだけの日も含む。日はセットの day（トレーニングの日。2026-10-23 の 0015 から。前は completed_at の JST 暦日。前の日に 0:30 に記録したセットは前の日に数える） | 日の基準を既存（週帯の点）と揃える |
 | 週の区切り | 月曜始まり | 既存の週帯・週分析と同じ |
 | 目標の範囲 | 週 1〜7 回 | |
 | 目標を途中で変えたとき | その週から新しい目標。過去の週は当時の目標で判定（目標の履歴を持つ） | 目標を上げた瞬間に過去の連続が消えないように |
@@ -26,7 +26,7 @@
 ## 設計
 ### データ（migration `0005_training_goal.sql`）
 - `training_goal(id, weekly_target SMALLINT CHECK 1..7, effective_from DATE UNIQUE CHECK 月曜, created_at)`。同じ週に変えたら上書き（upsert）
-- `workout_training_day` view: `SELECT DISTINCT (completed_at AT TIME ZONE 'Asia/Tokyo')::date AS day FROM workout_set WHERE completed_at IS NOT NULL`。連続週数は全期間の日付が要るため、セット本体を読まずに日付だけ取る（INV-5: 読み取り時の集計は可）
+- `workout_training_day` view: `SELECT DISTINCT (completed_at AT TIME ZONE 'Asia/Tokyo')::date AS day FROM workout_set WHERE completed_at IS NOT NULL`（2026-10-23 の 0015 で `SELECT DISTINCT day FROM workout_set WHERE completed_at IS NOT NULL` に替えた。`docs/training-day-implementation-plan.md`）。連続週数は全期間の日付が要るため、セット本体を読まずに日付だけ取る（INV-5: 読み取り時の集計は可）
 - 連続週数・リングは保存しない（計算で出す）
 
 ### 計算（pure・`Shared/Continuity.swift`。アプリとウィジェットで共有）

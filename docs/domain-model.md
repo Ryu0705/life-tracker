@@ -236,6 +236,11 @@ CREATE TABLE routine_exercise (
 
 CREATE INDEX routine_exercise_exercise_idx ON routine_exercise (exercise_id);
 
+-- 2026-10-23 (migration 0015・10-23 時点で本番は未適用): トレーニングの日 day DATE NOT NULL をセッションとセットに持つ。セッションの day = 記録した日
+--   (トレーニングのタブの週の帯で選んでいた日。前の日は翌日 2:00 まで記録できる)。セットの day = セッションの day ((session_id, user_id, day) の外部キー)。
+--   1 人 1 日 1 セッション (UNIQUE (user_id, day))。started_at・completed_at は day の 0:00〜翌日 2:00 の中 (CHECK)。下の「進行中は同時 1 件」は 0015 で消した
+--   (前の日と今日が同時に開きうる)。集計の日はすべて set.day (completed_at は時刻の幅にだけ使う)。workout_set → workout_entry の外部キーは session_id も組に入れた。
+--   正の定義は supabase/migrations/0015_training_day.sql、決まりは docs/gymwork-alignment-design.md §3.5・docs/training-day-implementation-plan.md
 CREATE TABLE workout_session (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   actual_task_id UUID UNIQUE REFERENCES actual_task (id) ON DELETE SET NULL,

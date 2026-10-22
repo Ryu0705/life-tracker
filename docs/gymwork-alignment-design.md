@@ -213,7 +213,7 @@ iPhone 17（縦 852pt）で上から: ステータス＋inline ナビ 103 / 週�
 
 ### 3.2 pure 関数（`WorkoutSummary`）とテストケース
 
-日の基準は 1 か所: `dayKey(_ date: Date, calendar:) -> Date = calendar.startOfDay(for:)`（`WorkoutProgress.daily` と同じ completed_at の JST 暦日。session.started_at は日の判定に使わない）。集計の定義も 1 か所: ボリューム = `WorkoutProgress.value(of: .volume, in:)`（weight_reps の本番セット Σw×r。種目横断でもそのまま使える＝カード見出しの合計と日合計が必ず一致）、本番セット数 = `!isWarmup` の件数（自重・時間種目も数える）、種目数 = セットが 1 つでもある種目（W のみでも数える）。
+日の基準は 1 か所: `dayKey(_ date: Date, calendar:) -> Date = calendar.startOfDay(for:)`（`WorkoutProgress.daily` と同じ completed_at の JST 暦日。session.started_at は日の判定に使わない）。集計の定義も 1 か所: ボリューム = `WorkoutProgress.value(of: .volume, in:)`（weight_reps の本番セット Σw×r。種目横断でもそのまま使える＝カード見出しの合計と日合計が必ず一致）、本番セット数 = `!isWarmup` の件数（自重・時間種目も数える）、種目数 = セットが 1 つでもある種目（W のみでも数える）。（→ 2026-10-23 の 0015 から: 日の基準はセットの day（トレーニングの日。週の帯で選んでいた日）。completed_at は時刻の幅（dayTotals・timeRangeText）にだけ使う。`training-day-implementation-plan.md`）
 
 | 関数 | 仕様 | テスト（境界含む） |
 |---|---|---|
@@ -225,7 +225,7 @@ iPhone 17（縦 852pt）で上から: ステータス＋inline ナビ 103 / 週�
 | `shiftWeek(selected:, by: Int, today:, calendar:) -> Date` | 同じ曜日の前後の週へ。未来になるなら today に丸める | 9/24(木) +1 → 10/1 は未来 → 9/30 / 9/30 −1 → 9/23 / 今週で +1 は呼ばれない（View 側で無効） |
 | `isSelectable(day:, today:, calendar:) -> Bool` | 未来日は不可 | 今日 true / 明日 false / 昨日 true |
 | `recordedDays(_ sets:, calendar:) -> Set<Date>` | dayKey の集合 | UTC 表記で前日 15:30Z（=JST 0:30）は JST の日 |
-| `mergeToday(historySets:, todaySets:, today:, calendar:) -> [WorkoutSet]` | history から今日の分を落として today store のセットに差し替える（3 か所の数字を一致させる） | history に古い今日分があっても todaySets が勝つ / today が空なら今日分なし |
+| `mergeToday(historySets:, todaySets:, today:, calendar:) -> [WorkoutSet]` | history から今日の分を落として today store のセットに差し替える（3 か所の数字を一致させる） | history に古い今日分があっても todaySets が勝つ / today が空なら今日分なし |（→ 2026-10-23 `mergeLive(history:live:)` に替えた: 開いている日（今日と、開いていれば前の日）の分を記録の store のセットに差し替える）
 | `weekTotals(sets:, exercisesById:, week:, calendar:) -> WeekTotals { volume: Double?, byDayMuscle: [(day, muscle, volume)], workingSetsByMuscle: [(muscle, count)], totalWorkingSets }` | 半開区間で絞る。部位は `exercise.muscleGroup`（1 種目 1 部位の限界は表示で誤魔化さない） | 境界の 2 セットを除外 / 空週 → volume nil・空配列 / 自重のみの日 → byDayMuscle に 0、workingSets に加算 / 部位別は多い順・同数は表示名順 |
 | `volumeChange(current:, previous:) -> Int?` | (cur−prev)/prev×100 を四捨五入。prev nil または 0 → nil | (2545, 2270) → 12 / (90, 100) → −10 / (100, nil) → nil / (100, 0) → nil |
 | `combinations(sets:, exercisesById:, today:, calendar:, limit: 5) -> [DayCombination { day, exerciseIds: [UUID], muscleGroups: [MuscleGroup], setsByExercise }]` | today より前の日ごと。exerciseIds はその日に最初に記録した順（`WorkoutLogic.groupByExercise`）。muscleGroups は本番セット数の上位 2（同数は出現順）。**同じ種目集合の日は新しい方だけ残す（dedupe）**。新しい順・limit | 胸日 2 回・背中日 1 回・脚日 1 回（古い胸日は落ちる）→ 3 件、順序は新しい順 / 今日は含まない / 1 部位のみ → "胸" / 3 部位 → 上位 2 / limit 5 / 深夜またぎで 2 日に割れた記録は 2 件のまま（既知の制約） |
@@ -266,7 +266,7 @@ func fetchSets(completedFrom from: Date, to: Date) async throws -> [WorkoutSet]
 }
 ```
 - **書き込み API を一切持たない**（受け入れ条件で grep）。今日の store（`WorkoutSessionStore`）に日付選択の状態を持ち込まない（C 注意 4: 過去日を見ただけで下書きが消える事故の回避）
-- 今日の分は常に today store から合成する（`mergeToday`）。history store が今日を含む週を持っていても today store が勝つ
+- 今日の分は常に today store から合成する（`mergeToday`）。history store が今日を含む週を持っていても today store が勝つ（→ 2026-10-23 から: 開いている日（今日と、開いていれば前の日）の分を記録の store から合成する（`mergeLive`））
 - 更新契機: `WorkoutView.task` / `.refreshable` / 週送り / 分析画面表示（当週＋前週）/ 組み合わせ（今日から 28 日前まで＝5 週）。`.onChange(of: sessionStore.session?.id)` で `invalidate()`（23:50 → 0:10 の日跨ぎで昨日分がキャッシュ落ちしないため）
 - テスト: 同じ週を 2 回 `ensureLoaded` してもフェッチは 1 回 / `sets(on:)` は JST 暦日で絞る / `invalidate` 後は再フェッチ / エラーはキャンセルなら無視（既存 `isCancellation` を共用）
 
@@ -279,6 +279,29 @@ func replacePlannedExercise(_ oldId: UUID, with newId: UUID) async
 ```
 テスト: 位置が保たれる / 記録済みは拒否 / 既存種目への差し替えは拒否 / drafts が新種目の前回で再生成される。
 削除: `recordedExerciseIds` / `progressExercises` / `load()` 内の `fetchRecordedExerciseIds` / `addSet` 内の `recordedExerciseIds.insert`（既存テストはこれらを参照していない＝削除で壊れない。`load()` の並列フェッチは 3 → 2 本）。それ以外は触らない。
+
+**トレーニングの途中で 0:00 をまたいだとき**（2026-10-22 23:3x 本人の問いで調べた。【事実・`WorkoutSessionStore`・`WorkoutTests` の `recordAcrossMidnightWithoutReload`・`staleSessionClosedOnLoad`】。本人が決めた形ではない。日の基準を completed_at の JST 暦日にしたのは上の Round 2 の合意）
+- 記録は消えない。0:00 の前のセットは前日のセッション（終わりは最後のセットの時刻で閉じる）、後のセットは今日の新しいセッションに入る
+- 画面を開いたまま 0:00 の後に ✓: 0:00 の前に記録した行が今日の画面から消える（前日の記録になる）。カードと ✓ していない行は残り、✓ した行が今日の 1 セット目になる
+- 0:00 の後に読み直す（`load()`: タブの再表示・下に引く・起動し直し）: 今日のセッションが無いので、カードと ✓ していない行（下書き）も消え、画面が空になる
+- 「前回」は今日より前で最も新しい日なので、0:00 の前のセットになる
+- 日のまとめ・ボリューム・週の回数（`workout_training_day` は completed_at の JST の日）は 2 日に分かれる。0:00 の前後に 1 セットずつあれば週の回数は 2 日。日曜→月曜なら前の週と今週に 1 日ずつ
+- 本番の実データ（2026-10-22 23:3x 読むだけの SQL）: セッション 11・セット 118。0:00 をまたいだセッションは 0。0:00〜4:00 のセットは 20（10-11 00:11〜01:12・10-12 02:56〜04:44 の 2 回。どちらも 0:00 の後に始めた）。1 回の長さは 10〜107 分、セットとセットの間は最大 19 分
+
+**案（2026-10-22 23:4x・本人の問い「続けている間は同じ日にまとめる案を出して」。下の 23:5x の本人の言い直しで、この案はやめた）**: 前の日に始めたトレーニングに、前のセットから一定の時間（AI の推奨は 1 時間）以内に ✓ したら、その続きにする。トレーニングの日は 1 セット目を ✓ した日（セッションの開始の日）。同じ日の中は今のまま。集計の日の基準を completed_at の日からセッションの開始の日に変える（アプリの集計 10 か所ほど・view `workout_training_day` を 0015 で。既存のデータは 0:00 をまたいだものが 0 なので直さない）。予定のタブの時刻は実際の時刻のまま
+- 2026-10-22 23:4x 本人（原文）「2にしつつ、どの日付で記録するかを選んでいるのだから0:00以降に始めたトレーニングを昨日にするかどうかはユーザが選べるでしょ」→ AI は「2」を選択肢の 2（2 時間）と読み、「選んでいる」を「今のアプリは記録の日を選べない」という前提の違いと読んだ（読み違い。本人の意図は 2:00 と週の帯の日付）。23:5x 本人「トレーニングごと（推奨）」もこの読み違いの上の問いへの答え
+- 2026-10-22 23:5x 本人（原文）「ちょっと認識齟齬がありそう。この画面で日付を選択できると思うんだけど、02:00までは当日にも前日にも登録できるようにするという意味。認識あってる？チェックをつけたものを時間によって当日か前日か判定するのではなく、登録できるかどうかが時間で決まるという意味」→ 形（上の案と「続きは 2 時間」「0:00〜4:00 に始めたものを選べる」はやめた。実装は未着手）:
+  1. 記録する日は、トレーニングのタブの週の帯で選んでいる日。今日はいつでも、前の日は翌日の 2:00 まで、今日と同じ画面で ✓ できる。2:00 を過ぎた前の日と、それより前の日は今のまま読むだけ（`PastDayView`）
+  2. ✓ はそのとき選んでいる日のトレーニングに入る。アプリが時刻で日を決めることはしない。その日にトレーニングがあれば、それに足す（同じ日の中は 1 つ）
+  3. トレーニングの日は `workout_session` に持つ（0015 で列 `day`。今までの分は started_at の JST の日で埋める）。0:30 に前の日へ記録すると、セットの時刻は実際の時刻・日は前の日。集計（日のまとめ・ボリューム・分析・月の表・「前回」・週の回数の view・ウィジェット）はトレーニングの日で数える。予定のタブの時刻は実際の時刻のまま
+  4. 【AI 既定・本人に確認中】0:00 をまたいでも、画面は選んでいた日（前の日）のまま変わらない。2:00 を過ぎたら前の日は読むだけになり、✓ していないカードと行は今日の画面に移る
+  4b. 2026-10-23 00:0x 本人（原文）「ただし、当日0:00以降に当日の記録を入れたら02:00前でも前日の登録は閉じる。当日の記録を消したら開く。」→ 前の日に ✓ できるのは「今が 2:00 より前」かつ「今日の記録が 0 件」のとき。今日の記録を全部消す（✓ の取り消しを含む）と、2:00 より前なら開く。【AI 既定】前の日が閉じたとき（2:00 を過ぎた・今日に記録した）は、前の日の ✓ していない種目と行を今日の画面に移す（開き直しても戻さない）
+  5. 本番の実データでは、10-11 00:11〜01:12 は前の日（10-10）にもできる。10-12 02:56〜は 2:00 の後に始めたので 10-12 だけ
+  6. 順: 0015 は 0014 の後（本番は別の OK）。新しいビルドは 0015 を本番に流してから入れる（列が無い DB では動かない）
+  7. 2026-10-23 00:1x 本人「段階3の後にして」→ 実装は段階 3（0013・0014 を本番に）の後に着手する
+  8. 2026-10-23 01:2x 実装の計画を本人が承認 → `docs/training-day-implementation-plan.md`（DB は 0015・store は日ごとの状態・集計は set.day）
+  9. 2026-10-23 02:5x 本人の選択「移さない」（問い「前の日が閉じたとき、前の日の残りの行（✓ していない種目・✓ 済みの種目の残りの行）をどうしますか？」。選んだ案の説明「前の日が閉じたらやり残しは消える。0:30 に今日へ ✓ した瞬間に、前の日のやり残しの種目と行も消える」）→ 4 と 4b の【AI 既定】「✓ していない種目と行を今日の画面に移す」は採らない。前の日が閉じたら（2:00 を過ぎた・今日に記録した）、前の日の ✓ していないカードと行は消える。開き直したとき（今日の記録を全部消した）は ✓ 済みのカードだけが戻る。きっかけ: 計画どおり作ると、翌朝開いたときに前の日のやり残し（前回の数に合わせて用意した行など）が今日に並ぶ、と実装（4 の 2）で分かった
+  10. 実装（2026-10-23。詳細と作業の記録は `docs/training-day-implementation-plan.md` の付録 A・B）: DB は 0015（セッションとセットに day・1 人 1 日 1 つ・時刻の窓の CHECK・day を送らない書き込みはトリガーが埋める。本番は別の OK）。アプリは開いている日ごとの状態を持つ store（`RecordWindow` が開いている日を決める）・集計の日はすべて set.day・トレーニングのタブは毎分の時計で 0:00 と 2:00 を見る。前の日を開いているときだけ、カードの見出し・カードのメニュー・プログラムのメニューの「今日」を「この日」と呼ぶ（上の帯の日付と「今日へ」は今の過去の日と同じ）。閉じた後に ✓・取り消し・編集・削除をすると「前の日には記録できなくなりました」のアラート
 
 ### 3.6 WorkoutView の変更点（記録画面の挙動を壊さない範囲）
 
