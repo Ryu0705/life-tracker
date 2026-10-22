@@ -193,7 +193,7 @@ CREATE TABLE pattern_version_membership (
 - [x] resolve と操作規則の単体テスト（上の表の全行、前日 O の既存バグ、日をまたぐ睡眠、祝日、単発↔系列）— `ScheduleStage1Tests.swift` 38 件。単体テスト全体 143 件成功（2026-09-30）
 - [x] モックでシミュレータ確認（全操作・週帯の移動・過去日が押せない）— 2026-09-30 `-mock-day`。下の実装メモの「シミュレータで確かめたこと」
 - [x] migration 0006 を本番適用（2026-09-30 本人 OK。MCP apply_migration `v2_template_version`。関数の本体が DB と一致することを pg_proc で確認）。第 1 世代 2 件（睡眠＝祝日の登録あり・ジム）が入った。アプリと同じ REST 経由で `schedule_template_create`（10/5 の試験系列）→ 過去日 9/29 への `schedule_occurrence_delete` は「past day is not editable」で拒否 → `schedule_template_delete_following` で系列ごと削除、を確認。試験データは残っていない。本番 DB につないだアプリで予定の表示も確認
-- [ ] 0013（旧列・pattern_template_membership の削除。旧 0007 → 0008 → 0010 → 0011 → 0012 → 0013）は、本人の実機で新しいビルドの読み書きを確かめてから（本人 OK 待ち）
+- [x] 0013（旧列・pattern_template_membership の削除。旧 0007 → 0008 → 0010 → 0011 → 0012 → 0013）は、本人の実機で新しいビルドの読み書きを確かめてから（本人 OK 待ち）→ 2026-10-23 00:27 本番に（`v2_drop_legacy_template`。サインインと複数人化の段階 3 の本人 OK。前提は 0006 以降のビルドを 9-30 から使っているので満たしているとみなした【AI 既定・本人に知らせた】。`auth-multiuser-implementation-plan.md` §1-2・作業時間）
 - [ ] 実機確認は本人
 
 ## 段階 1 実装メモ（AI の判断。2026-09-30。本人未確認・違えば直す）

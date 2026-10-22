@@ -29,10 +29,13 @@
 1. 棚卸し（済・13:38〜13:51）
 2. 設計（このファイル）→ deep-task のレビュー → 本人の確認
 3. 実装計画 → 本人 OK で実装 → 単体テスト・シミュレータで全タブを確かめる → 本人確認 → commit・push → 本番 migration（本人 OK 後・バックアップを取ってから）
+4. 【2026-10-23 済み】0013（00:27）・0014（00:43）を本番に。本人が実機でサインインして「全タブ OK」（00:4x）。docs の書き直し（計画の段階 4）は 10-23 05:2x〜。経過は計画の作業時間
 
 ---
 
-## 設計（レビュー反映・本人未確認）
+## 設計（実装・本番適用済み。2026-10-23 の段階 4 で今の形に直した）
+
+2026-10-23 05:2x〜 各節を今の形に直した（計画の段階 4）。サインイン（§7）と Supabase の設定（§8）は、10-22 のパスワードレスの形を「今の形」にし、それより前の案を「当時の案」に畳んだ。0015（トレーニングの日・10-23 04:31）・0016（種目の追加・05:06）で変わった所も直した。DB の今の形の一覧は `domain-model.md`、確かめは `supabase/test/checks.sql`。
 
 レビュー `auth-multiuser-review-2026-10-19.md` の「AI が直してよい点」を 10-19 14:3x に反映した。括弧の M 番号はレビューの番号。本人の判断・操作を含む M13（バックアップ）・M19（Google の設定）は 14:4x に AI が §6・§7 に入れた（操作は本人）。10-19 15:4x、実装計画のレビュー `auth-multiuser-plan-review-2026-10-19.md`（P1〜P24）で分かった訂正を、各節に【計画…】の注記で入れた。本文の書き直しは計画の段階 4。
 
@@ -41,18 +44,19 @@
 - 人のデータを持つ表すべてに `user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE` を足す。子の表（`workout_set`・`routine_exercise`・`actual_task_tap` など）にも持たせる（RLS の式を全表で同じにし、親をたどる副問い合わせを避けるため）
 - 例外は `exercise`。共有の行は `user_id` が NULL なので、NULL 可のまま既定値 `auth.uid()` だけを付ける（将来の自作は本人の物になる）（§3・M4）
 - 既定値を `auth.uid()` にするので、アプリの書き込みと関数の中の INSERT（10 関数・17 か所）は変えずに本人の値が入る。関数の引数も変えない（PGRST203 と Swift の `ScheduleRPC` の書き換えを避ける・棚卸し §1-4）
-- MCP（postgres）は BYPASSRLS で表の所有者なので、RLS を越えて読み書きできる。NULL になるのは既定値の `auth.uid()` だけ【事実】。MCP で INSERT するときは `user_id` を明示する（UID は memory。repo には書かない）。明示を忘れると NOT NULL で失敗するので、入れ忘れの行は作れない。子の表は複合の外部キーが持ち主の食い違いを止める（M25。棚卸し §3-1 R-3）
+- MCP（postgres）は BYPASSRLS で表の所有者なので、RLS を越えて読み書きできる。NULL になるのは既定値の `auth.uid()` だけ【事実】。MCP で INSERT するときは `user_id` を明示する（UID は memory。repo には書かない）。明示を忘れると NOT NULL で失敗するので、入れ忘れの行は作れない（`exercise` は NULL 可なので止まらず共有の種目になる・SQL レビュー S10・§9）。子の表は複合の外部キーが持ち主の食い違いを止める（M25。棚卸し §3-1 R-3）
 - 親と子の持ち主の一致: 親に `UNIQUE (id, user_id)` を足し、子の外部キーを `(親の id, user_id)` の組にする。`ON DELETE SET NULL` の外部キーは列を指定する形（`ON DELETE SET NULL (template_id)`。PostgreSQL 15 以上。本番は 17.6【事実】）にして user_id は消さない
   - `UNIQUE (id, user_id)` を足す親は 8 表: category・scheduled_task・task_template・actual_task・pattern・task_template_version・routine・workout_session（M30）
-  - 組に作り直す外部キーは 19 本（M30）【計画 §1-2: 0013 で `task_template → category` が無くなり 18 本】:
+  - 組にした外部キーは 19 本【事実・`checks.sql`「子の外部キー 19 本が user_id を含む組」】: 下の一覧（M30 の 19 本から、0013 で `task_template → category` が無くなって 18 本）と、SQL レビュー S2 で組にした `workout_set_entry_fk`:
     - actual_task → category・scheduled_task（SET NULL (scheduled_task_id)）・task_template（SET NULL (template_id)）
     - actual_task_tap → actual_task ／ day_meta → pattern
     - pattern_version_membership → pattern・task_template_version
     - routine_exercise → routine
-    - scheduled_task → category・pattern・task_template ／ task_template → category ／ task_template_exdate → task_template ／ task_template_version → category・task_template
-    - workout_entry → workout_session ／ workout_set → workout_session
+    - scheduled_task → category・pattern・task_template ／ ~~task_template → category~~（0013 で列ごと消えた）／ task_template_exdate → task_template ／ task_template_version → category・task_template
+    - workout_entry → workout_session ／ workout_set → workout_session（0015 で `(session_id, user_id, day)` に締めた。セットの日 = セッションの日）
     - workout_session → actual_task（SET NULL (actual_task_id)。`UNIQUE (actual_task_id)` は残す）・routine（SET NULL (routine_id)）
-  - 今のままにするもの: `exercise` を指す 3 本（`routine_exercise`・`workout_entry`・`workout_set`）と `workout_set_entry_fk`（`(entry_id, exercise_id)`）。`workout_set` と `workout_entry` は、両方が `(session_id, user_id)` で同じセッションを指すので持ち主がそろう。`pattern_template_membership` は先に 0013 で消す（§11・M14）
+  - 組にしないもの: `exercise` を指す 3 本（`routine_exercise`・`workout_entry`・`workout_set`。共有の種目は user_id が NULL）。`pattern_template_membership` は先に 0013 で消した（§11・M14）
+  - `workout_set_entry_fk`: 設計では `(entry_id, exercise_id)` のままの予定だったが、SQL レビュー S2 で `(entry_id, exercise_id, user_id)` の組にし（`workout_entry` に `UNIQUE (id, exercise_id, user_id)`）、0015 で `(entry_id, session_id, exercise_id, user_id)` に締めた（前の日の entry に今日のセットが付くのを止める）。DEFERRABLE でないので、entry とセットの種目を両方替えるときは 1 つの文（書き込む CTE）にする（0016）
   - 種目は組にできない（共有の行は user_id が NULL）。外部キーの検査は RLS を越えるので、他人の自作の種目の UUID を知っていれば参照できる。UUID は推測できず、他人の自作は RLS で見えないので受け入れる。種目以外は組にするので、他人の行があるかを外部キーのエラーで探ることもできない（M17）
 - 索引: RLS の式で絞る `user_id` を、各表の主な索引の先頭に足す
 
@@ -64,19 +68,19 @@
 | D2 | `body_weight_record` の主キー `recorded_on` | 主キー `(user_id, recorded_on)`。upsert は `onConflict: "user_id,recorded_on"` |
 | D3 | `day_meta` の主キー `date` | 主キー `(user_id, date)` |
 | D4 | `training_goal` の一意 `effective_from` | 一意 `(user_id, effective_from)`。upsert も同じ |
-| D5 | 進行中のセッションは全体で 1 件 | 人ごとに 1 件。部分 UNIQUE は表の制約では書けないので索引にする: `CREATE UNIQUE INDEX ... ON workout_session (user_id) WHERE ended_at IS NULL`（M30） |
+| D5 | 進行中のセッションは全体で 1 件 | 人ごとに 1 件。部分 UNIQUE は表の制約では書けないので索引にする: `CREATE UNIQUE INDEX ... ON workout_session (user_id) WHERE ended_at IS NULL`（M30）。【0015 で消した: 前の日と今日が同時に開くので、`UNIQUE (user_id, day)`（1 人 1 日 1 セッション）に替えた。`training-day-implementation-plan.md`】 |
 | D6 | 睡眠の重なりを全体で禁止 | `EXCLUDE USING gist (user_id WITH =, tstzrange(...) WITH &&)`。`CREATE EXTENSION btree_gist WITH SCHEMA extensions`（0001 の pgcrypto と同じ置き場。本番は未インストールで 1.7 を入れられる【事実・レビュー §0】） |
 | D7 | 種目は名前で一意 | 「共有の中で」と「人ごとの中で」の 2 つの部分 UNIQUE（§3） |
 | D8 | 曜日・祝日のパターンは全体で 1 件 | `CREATE UNIQUE INDEX ... ON pattern (user_id, apply_day) WHERE apply_day IS NOT NULL`（M9・M30） |
 | D9 | view が所有者の権限で全員の行を返す | `ALTER VIEW public.workout_training_day SET (security_invoker = true)`。RLS で本人の行だけになる |
-| A3 | ウィジェットは App Group の 1 キー | サインアウトで `continuity.v1` を消し（`removeObject`）、`WidgetCenter.shared.reloadAllTimelines()` を呼ぶ。未サインインのウィジェットは「サインインしてください」。今は「スナップショット無し」を「アプリで週の目標回数を設定」と出すので（`StreakWidget.swift:60-66`）、未サインインを区別する印（`Snapshot` に `isSignedIn` を足すか、別のキー）を足す（M21）【計画レビュー P8: 消すと印を置く場所が無く、`Snapshot` を変えると今の保存が読めなくなるので、別のキー（Bool）にする。計画 §2-6】 |
+| A3 | ウィジェットは App Group の 1 キー | サインアウトで `continuity.v1` を消し（`removeObject`）、別のキー `auth.signedIn.v1`（Bool）を false にして `WidgetCenter.shared.reloadAllTimelines()`。サインインで true。ウィジェットは false なら「アプリでサインインしてください」、true でスナップショットが無ければ今の文言（「アプリで週の目標回数を設定」）。キーが無い（認証の前のビルドからの移り）ときはサインイン済みとみなす。`Snapshot` の形は変えない（変えると今の保存が読めなくなる）。設計の「`Snapshot` に `isSignedIn`」は計画レビュー P8 で別のキーに変えた（計画 §2-6・M21） |
 
 一意の制約に user_id を含めるので、他の人の行とぶつかって保存が失敗することも、エラーから他の人の記録が漏れることもなくなる（棚卸し §1-2 の注）。
 
 ### 3. 初期データ（棚卸し §1-5・F1〜F3）
 
 - **種目**【AI 既定・本人に一言で提示】（元の問い A。案 1＋M16 の view）
-  - 159 件は共有のマスタ（`user_id` NULL）。API からはだれも書けず、MCP（postgres）だけが書ける。自作の種目は人ごと（`user_id` = 本人）
+  - 159 件は共有のマスタ（`user_id` NULL）。API からはだれも書けず、MCP（postgres）だけが書ける。自作の種目は人ごと（`user_id` = 本人）。【10-23 の 0016 で共有に 1 件（スミスマシンインクラインベンチプレス・sort_order 120）を足して 160 件。`incline-smith-bench-plan.md`】
   - §6 の付け替えの対象から外す。159 件はすべて seed の名前と一致し、本人の自作は 0 件【事実・棚卸し】（M4）
   - `exercise.sort_order` はマスタの並び（seed が部位ごとに振った 100 番台）として残す。`is_archived`・`note` は人ごとの表 `exercise_preference (user_id, exercise_id, is_archived, note, sort_order)` に移し、`exercise` から消す。本番は全部 false／NULL なので、移すデータは無い（M16）
   - view `exercise_for_user`（`security_invoker = true`）で今の列の形を保つ: `SELECT e.id, e.name, e.muscle_group, e.equipment, e.metric_kind, p.note, COALESCE(p.is_archived, false) AS is_archived, COALESCE(p.sort_order, e.sort_order) AS sort_order FROM public.exercise e LEFT JOIN public.exercise_preference p ON p.exercise_id = e.id`。`exercise_preference` の RLS で、本人の設定だけが結合される（M16）
@@ -111,12 +115,14 @@
   - `FOR UPDATE USING (user_id = (select auth.uid())) WITH CHECK (user_id = (select auth.uid()))`
   - `FOR DELETE USING (user_id = (select auth.uid()))`
   - 共有の行は API からはだれも書けない（MCP だけ）
-- anon から全表・view・関数の権限を外す（TRUNCATE を含む。関数は PUBLIC からも外す・M1）。authenticated には SELECT・INSERT・UPDATE・DELETE だけを与える（TRUNCATE・REFERENCES・TRIGGER は与えない）
+- anon から全表・view・関数の権限を外す（TRUNCATE を含む。関数は PUBLIC からも外す・M1）。authenticated には表に SELECT・INSERT・UPDATE・DELETE だけ（TRUNCATE・REFERENCES・TRIGGER・MAINTAIN は与えない。MAINTAIN は PG17 の新しい権限・P12）、view には SELECT だけ。`service_role` の権限は触らない
 - これから作る物が anon に開かないよう、既定の権限も外す（M1・M2）
-  - `ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ...` を表・関数・シーケンスの 3 つに書く。関数は `REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon`【計画レビュー P1 で訂正: `IN SCHEMA` 付きでは PUBLIC の EXECUTE は消えない（組み込みの既定に足し算で重なる）。グローバルの `ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC` を足す。authenticated から MAINTAIN も外す（P12）。計画 §1-3】
+  - 関数はグローバルの `ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`（`IN SCHEMA` を付けない。public にも private にも効く）。【事実・計画レビュー P1】スキーマ単位の既定の権限は、作るときに組み込みの既定（関数は PUBLIC に EXECUTE）に足し算で重なるので、`IN SCHEMA public ... FROM PUBLIC` では PUBLIC の EXECUTE が消えない
+  - `FOR ROLE postgres IN SCHEMA public` で: 表とシーケンスは anon から全部外す。authenticated から `TRUNCATE`・`REFERENCES`・`TRIGGER`・`MAINTAIN` を外す。関数は anon から `EXECUTE` を外す（計画 §1-3 の b2）
+  - これからの表は自動で「authenticated に読み書きだけ」、関数は「authenticated・service_role だけ」になる
   - 既定の権限は作った人（grantor）ごとに 2 系統ある。MCP とダッシュボードの SQL は postgres で動くので、効くのは `FOR ROLE postgres` の行。`supabase_admin` の行は postgres からは変えられず、Supabase 側が作る物にだけ効く【事実】。`FOR ROLE postgres` は省いても同じ結果だが、明示する
-- 新しい migration の決まりに「GRANT を書く」を足す（今の「GRANT を書かない」方針を改める・棚卸し §3-2）
-- 本番適用の確かめの期待値を逆にする（棚卸し §3-2）: anon は権限エラー（42501）、テスト用の 2 人目は 0 行、本人は全部。0 行になるのは表の権限を持つ authenticated で、anon は権限が無いので 42501 になる【事実】（M7。アプリの 42501 の文言 §7 とも合う）。確かめの一覧は §9（M28）
+- 新しい migration には GRANT と REVOKE を書く（0011・0012 までの「GRANT を書かない・Supabase の既定に任せる」をやめた・棚卸し §3-2。0014 から）。新しい表には RLS と policy も付ける。付け忘れは `checks.sql` が止める（repo の `CLAUDE.md` の本番の migration の節）
+- 本番適用の確かめの期待値を逆にする（棚卸し §3-2）: anon は権限エラー（42501）、テスト用の 2 人目は 0 行、本人は全部。0 行になるのは表の権限を持つ authenticated で、anon は権限が無いので 42501 になる【事実】（M7。アプリの 42501 の文言 §7 とも合う）。確かめの一覧は §9（M28）。本番の結果（10-23 00:43）【事実】: anon キーだけでは表・view・RPC・INSERT がすべて 401（42501）・2 人目は全表・view が 0 行（共有の種目だけ見える）・本人は 0014 の前と同じ件数
 
 ### 6. 今あるデータの付け替え【本人 14:4x で決定済み: 2026-04-14 作成の Gmail のアカウント】
 
@@ -143,7 +149,40 @@
   - `schema_migrations` の `rollback` 列は使わない（MCP の `apply_migration` にその引数が無い）
   - バックアップから戻すのは最後の手段
 
-### 7. サインイン（アプリ）【本人 12:3x・形は AI 既定】
+### 7. サインイン（アプリ）【本人 12:3x・10-22 パスワードレスに変更】
+
+**今の形**（2026-10-22 15:0x 本人「B（コード＋Google だけ）」→ 15:3x に作り替えた。本番で使っている。経過は計画の作業時間 10-22 15:3x〜）
+
+- **画面と状態**: 起動 → `AuthStore` が `authStateChanges` の `.initialSession` を受けるまで起動画面 → セッションがあれば今の TabView（`.id(uid)`）。無ければサインインの画面。状態は「起動中」「未サインイン」「コードの入力（メールアドレス）」「サインイン済み（UID）」の 4 つ。データの読み込みは、サインイン済みでだけ始める（M20）
+- **サインインの画面**: 上に「LifeTracker」の文字・見出し「サインイン・サインアップ」・枠線のメールアドレスの欄・アプリの青で塗った全幅の「コードを送る」・「または」の線・Google のボタン。中身は縦の真ん中（キーボードが出たら残りの高さの真ん中・足りなければスクロール）。画面の言葉は「サインイン」「サインアップ」「サインアウト」に揃える（「ログイン」「ログアウト」「新規登録」は使わない）。説明の一文は置かない（本人 10-22 15:1x「絶対にやめて。上部にログイン・サインアップ と書けばいいだけでしょ。」）
+- **メールのコード**: `signInWithOTP(email:redirectTo:shouldCreateUser: true)` で 6 桁のコードを送る → コードの画面（見出し「入力したメールアドレスに届いた認証コードを入力してください」・送り先と「変更」・6 つの枠・主のボタン「認証」・60 秒の送り直し）→ `verifyOTP(email:token:type: .email)` でセッション
+  - 登録とサインインは同じ流れ。はじめての人は、コードを確かめたときに登録が終わる。新規登録・確認・再設定・新しいパスワードの画面は無い。コードの期限は 600 秒（本人 10-22 15:0x・U9）
+  - 【事実・GoTrue と supabase-swift 2.44.1 のソース】type `.email` は確認のトークンと Recovery のトークンの両方と比べるので、新しい人と登録済みの人の両方で通る。新しい人・確認がまだの人には「Confirm signup」、確認済みの人には「Magic Link」のテンプレートが使われる（本番の GoTrue の版が同じかは未確認）
+  - 本番で確かめたのは登録済みの人の道（10-22 19:2x 本人のアカウント）。新しい人の道（Confirm signup のコードが届くか）はまだ（10-23 本人「後ででいい」「1は後回し。」）
+  - 確かめている間に supabase-swift が流す `.signedIn` は使わず、処理の側がサインイン済みにする（片付けと初期データを 1 か所から 1 回ずつ呼ぶ）
+  - メールに URL は入らない（テンプレートは `{{ .Token }}`。U7・U9）。`lifetracker://auth-callback` の受け口・PKCE・`redirectToURL` の設定は、テンプレートを替える前に届いた古いリンクのために残している。implicit 形式の戻りはセッションを作らない（ログインの CSRF を避ける）
+  - サーバーのパスワードのサインイン（API）は Email の provider に含まれるので止められない。アプリには入口が無い
+- **失敗の文言**（`AuthFailure`）: サインアップを閉じている「今はサインアップを受け付けていません」／Email の provider が無効「今はメールのコードでサインインできません」／`email_address_not_authorized`「このメールアドレスには、今はコードを送れません」／`email_address_invalid`（形式・決まった無効なアドレス・ドメインに MX か A が無いなど。送る前にサーバーが断る）「メールアドレスが正しくありません。確かめて、もう一度入力してください」（本人 10-22 19:4x）／コードの誤り・期限切れ「コードが違うか、期限が切れています。新しいコードを送ってください」／送りすぎ（429）「しばらく待ってから、もう一度お試しください」／通信「通信できませんでした。電波のよい所で、もう一度お試しください」
+- **Google**: GoogleSignIn-iOS 10.0.0 で ID トークンを受け、`signInWithIdToken` で Supabase のセッションにする
+  - nonce を渡す: 乱数（`SecRandomCopyBytes`）の SHA-256 の小文字の 16 進を Google の `nonce:` に、元の値を `OpenIDConnectCredentials(nonce:)` に。Supabase の「Skip nonce check」は OFF のまま（ID トークンの使い回しを防ぐ検査を残す）。設計の M19（Skip を ON）から変えた（計画 §2-3。9.0.0 で nonce を渡せるようになった）
+  - Google Cloud に iOS 用と Web 用の 2 つのクライアント ID（本人 U2）。`Info.plist` の `GIDClientID` と逆順のクライアント ID の URL スキームは xcconfig から（値は公開の repo に書かない）。`CFBundleURLTypes` は `lifetracker` と合わせて 2 つ
+  - 同じ確認済みのメールアドレスなら、メールのコードと同じ 1 人にまとまる（10-21 23:41 本人のアカウントで確かめた。本人は email と google の 2 つの identity）。手動の連携は無効のまま
+  - Google の同意の画面はテストの状態なので、今 Google で入れるのはテストユーザーだけ（ほかの人に開くには公開が要る・§10）
+  - ボタンは自前（ほかのボタンと同じ高さ 52・角丸 12 の枠線・GoogleSignIn-iOS に入っている公式の G・「Google で続ける」・Google のブランドの決まりの色）。決まりのフォント Google Sans は入れられないのでシステムのフォント（決まりから外れる 1 点）【AI 既定】
+- **セッション**: supabase-swift が Keychain に持つ。【アプリのレビュー A15・10-21】Keychain の項目はアプリを削除しても残る見込み【推測】。削除はサインアウトではない。端末を人に渡すときはサインアウトする
+  - クライアントの設定に `emitLocalSessionAsInitialSession: true`（端末のセッションを期限切れでもすぐ初期セッションとして流す。オフラインの起動で待たされない。計画 §2-1）
+  - `AuthStore` は `authStateChanges` を 1 本だけ購読する。期限切れのセッションでもサインイン済みとして画面を出し、`.signedOut`（サインアウト・サーバーがセッション無効と返した）が来たときだけサインインの画面へ。更新がネットワークで失敗してもサインアウトにはしない（M20）
+  - data source は今の共有のクライアントを使う（サインインすると同じクライアントにトークンが付く）。セッションが無いと anon キーで送るので、データの呼び出しは 42501 になる【事実・M20】
+- **サインアウト**: 下のタブの最後の「プロフィール」タブの節「アカウント」（サインイン中のメールアドレスの下・確認つき）。本人 10-22 14:3x「プロフィールタブ」。分析の「プロフィールを設定」は近道として残す
+  - `signOut()` は先に端末のセッションを消して `.signedOut` を流し、その後 `/logout` を呼ぶ。失敗しても端末側はサインアウト済みとして扱う【事実・M21】
+  - 既定の `scope: .global` で、その人のすべての端末のセッションが消える【事実・10-22 19:5x 本番のログと supabase-swift のソース】。この端末だけにするなら `.local`。どちらにするかは決めていない
+  - 片付け（`SignInSideEffects`）: App Group の `continuity.v1` を消す・別のキー `auth.signedIn.v1` を false・`WidgetCenter.shared.reloadAllTimelines()`・休憩の Live Activity を終える・`GIDSignIn.signOut()`。起動して端末にセッションが無いとき・サインアウトを経ずに人が変わったときも先に片付ける（A5・10-21 22:4x）
+  - store の作り直しは TabView の `.id(session.user.id)`（人が変わったら SwiftUI が作り直す・M21）
+- **データの誤りの文言**（`DataAccessError`・計画 §2-5）: 42501 は、端末にセッションがあれば `refreshSession()` を 1 回試して「確認できませんでした。もう一度お試しください」、セッションが無いときだけ「サインインし直してください」（P9。期限切れのセッションの更新がネットワークで落ちた直後も 42501 になるため）。`fetchTaps` は 42501 と PGRST3xx（JWT 系）を空にせず上に投げる（M8）
+- **初回**: サインイン済みになったら UID ごとに 1 回 `ensure_user_defaults()`（§3）。失敗しても画面は出し、次の起動でまた呼ぶ。そのあとは今の画面のまま（新しい人の案内は §10）
+- 【アプリのレビュー A13】「新しいパスワード」の途中で落とすとサインイン済みになる → パスワードレスで画面が無くなったので当たらない
+
+**当時の案（10-22 より前。パスワード・確認と再設定のリンク。今は使っていない）**
 
 - **画面**: 起動 → `AuthStore` が `authStateChanges` の `.initialSession` を受けるまでは起動画面 → セッションがあれば今の TabView。無ければサインインの画面（メールとパスワード／新規登録／パスワードを忘れた／Google で続ける）。データの読み込みは、セッションがある状態でだけ始める（M20）
 - **メール＋パスワード**: 新規登録で確認メールを送り、本人がリンクを踏むと確認済みになる（本人の指示）。リンクはアプリの URL スキーム（例 `lifetracker://auth-callback`）に戻る（Universal Links は有料の Program が要るので使わない）。パスワードの再設定も同じ戻り方
@@ -156,16 +195,6 @@
   - 確かめ方【推測・M18】: iOS のメールでリンクを踏むと、Safari が Supabase の `/auth/v1/verify` を開き、`lifetracker://auth-callback?code=...` に転送し、「LifeTracker で開く」の確認が出てアプリに戻る見込み。実機で 1 回確かめる。シミュレータでは `curl -I` で転送先の URL を取り、`xcrun simctl openurl booted '<転送先>'` で代わりにする
 - **Google**: Google の公式の部品（GoogleSignIn-iOS）で ID トークンを受け、`signInWithIdToken` で Supabase のセッションにする。Google Cloud で iOS 用の OAuth クライアントを作る作業は本人（手順は AI が書く）。
   - 要るもの（M19）: Google Cloud で **iOS 用と Web 用の 2 つ**のクライアント ID を作る。ダッシュボードの Google provider の「Client IDs」に 2 つをコンマ区切りで入れ、「Skip nonce check」を有効にする（GoogleSignIn-iOS には nonce を渡す口が無く、Supabase の手順もこの形）。`Info.plist` に `GIDClientID` と、逆順のクライアント ID（`com.googleusercontent.apps.…`）の URL スキームを足す（`lifetracker://` と合わせて `CFBundleURLTypes` は 2 つ）。OAuth の同意画面は「テスト」のままにし、本人の Gmail をテストユーザーに入れる【推測】。手順は AI が書き、操作は本人【計画 §2-3 で変更: GoogleSignIn-iOS 9.0.0 以上は nonce を渡せるので、nonce を渡し「Skip nonce check」は OFF のまま】
-- **セッション**: supabase-swift が Keychain に持つ（【アプリのレビュー A15・10-21】Keychain の項目はアプリを削除しても残る見込み【推測】。削除はサインアウトではない。端末を人に渡すときはサインアウトする）。`AuthStore` が状態（未サインイン・サインイン済み・確認待ち）を持ち、`LifeTrackerApp` がそれで画面を出し分ける（A1）。data source は今の共有のクライアントを使い続ける（サインインすると同じクライアントにトークンが付く）
-  - セッションが無いと、同じクライアントは anon キーで送るので、データの呼び出しは 42501 になる【事実・M20】。だから画面の出し分けをデータの読み込みより先にする（上の「画面」）。トークンの自動更新は既定で有効
-  - `AuthStore` は `authStateChanges` を 1 本だけ購読する。`.signedOut` はサインアウトのほか、別の端末でのサインアウト・セッションの期限切れでも届く。オフラインで更新に失敗してもサインアウトにはせず、`.signedOut` が来たときだけサインインの画面へ（M20）
-- **サインアウト**: 設定画面（食事の設計で作る）か、それまではトレーニングの分析画面のプロフィールに置く（M21）
-  - 【2026-10-22 本人の決定で変更】下のタブの最後に「プロフィール」タブを作り、節「アカウント」にサインイン中のメールアドレスとサインアウトを置いた（本人「プロフィールの入力やログアウトの場所がわかりづらすぎる」→「プロフィールタブ」）。分析の「プロフィールを設定」は近道として残す
-  - `signOut()` は先に端末のセッションを消して `.signedOut` を流し、その後 `/logout` を呼ぶ。ネットワークの失敗は投げるが、端末側はもう消えているので、エラーでも「サインアウト済み」として扱う【事実・M21】
-  - store の作り直しは、TabView に `.id(session.user.id)` を付け、人が変わったら SwiftUI に作り直させる（`@StateObject` は `WorkoutView.swift`・`HomeView.swift`・`SleepView.swift` にある。手で消すより漏れが無い・M21。A4）
-  - ウィジェットのキーを消す（§2 の A3）。休憩の Live Activity が動いていれば終える（M21）
-- **エラーの文言**: 権限のエラー（42501）と「本人の行が 0 件で空」の区別がつくよう、42501 は「サインインし直してください」に変える（A5・A6。今は英語のまま出る）。上の順で出せばふつうは起きないが、保険として残す（M20）【計画レビュー P9: 期限切れのセッションの更新がネットワークで落ちた直後も 42501 になる。端末にセッションがあれば「もう一度お試しください」。計画 §2-5】
-  - `fetchTaps`（`SupabaseDayDataSource.swift:136-147`）は失敗を空として扱っている。少なくとも 42501 と PGRST3xx（JWT 系）は握りつぶさず上に投げる。他は今のまま空でよい（M8）
 - **サインインの画面の作り直し（2026-10-22 本人「サインイン画面のUI・UXもひどい」）**: どこが悪いか（本人が選んだ・AI が挙げた 4 つ全部）= 設定の画面に見える（一覧の行が並ぶだけ・アプリの顔が無い・見出しが重なる）／主のボタンが分からない（入力欄と同じ灰色の行で押せないように見える）／Google の扱い（一番下の行で目立たず、Google の見た目でもない）／要らないものが出ている（閉じている新規登録の入口・設定の行の形の「パスワードを忘れた」）
   - 本人の参考（00:29 に 3 枚。本人の iPhone のスクショ `~/Downloads/IMG_2263〜2265.PNG`・repo には入れない）【事実・画像で見た】:
     - 共通: 最初の画面はメールアドレスの欄 1 つだけ（識別子が先。パスワードは次の画面＝Amazon・Google、コード＝Slack）／入力欄は枠線の 1 本／主のボタンは塗りつぶしの 1 つ（Slack 緑・Amazon 黄の全幅、Google 青の丸いボタンを右寄せ）／補助の操作は文の中の青い文字のリンク／上に大きな見出しと短い説明（Amazon・Google はロゴも）
@@ -175,9 +204,21 @@
   - 【2026-10-22 15:0x 本人の決定で変更】サインインはメールの 6 桁のコード＋Google だけ（パスワードレス。資料 `auth-method-research-2026-10-22.md`）。下の「2 段（メール → パスワード）」と新規登録・再設定の画面はなくなる。1 段目はメールアドレス →「コードを送る」→ コードの画面 → サインイン済み（はじめての人はここで登録）
   - **採った形（2026-10-22 本人の決定。計画の「本人の決定」00:3x・01:2x）**: Slack 型の 2 段（メール →「次へ」→ パスワード）。上に「LifeTracker」の文字・中央の見出し（その下の説明は本人「または〜 の部分は不要。」で消した）・枠線の欄・アプリの青で塗った全幅の主のボタン・「または」の線・ほかのボタンと揃えた自前の Google のボタン（高さ 52・角丸 12・GoogleSignIn-iOS に入っている公式の G・Google のブランドの決まりの色）・補助は文字のリンク。閉じている間は新規登録の入口を出さない。確認と再設定はコードの画面（6 つの枠）
     - 【AI 既定】文言は「Google で続ける」／フォントはシステムのもの（決まりの Google Sans は入れられない。決まりから外れる 1 点）／暗い画面では G をそのまま暗い塗りに置く／コードの画面から戻ったとき 1 段目のメールアドレスを残す（メモリだけ）
-- **初回**: サインインの直後に `ensure_user_defaults()`（§3）。そのあとは今の画面のまま（新しい人の案内は §10）
 
-### 8. Supabase の設定【AI 既定・一部は本人の操作】
+### 8. Supabase の設定【一部は本人の操作】
+
+**今の設定**（2026-10-23。本人の操作は計画 §0-4 の U3・U7・U8・U9。画面の名前は `auth-multiuser-user-steps.md`）
+
+- メール（Email の provider）: 有効・メールの確認 ON。テンプレート（Confirm signup・Magic Link ほか）は 6 桁のコード `{{ .Token }}`（U7・U9。本人の文言「有効期限は 10 分です。」）。Email OTP の期限 600 秒
+- サインアップ: ON（本人 10-22 12:0x「今すぐ開ける」・12:1x「当たり前だが、誰でもサインアップできるようにしたい。」）
+- 送り手: 送るためだけの Gmail の SMTP（U8・10-23 01:0x 本人「U8済み」。0014 の後に入れた）。これで誰のアドレスにも送れる。外部の SMTP の初めの上限は 1 時間 30 通（変えられる）。ドメインを買って Resend などに替えるのは、ダッシュボードの SMTP の設定だけでアプリは変わらない（本人 10-22 14:2x）
+- Google の provider: 有効・iOS と Web の 2 つのクライアント ID・「Skip nonce check」OFF（§7）
+- 戻り先の URL: 「Additional Redirect URLs」に `lifetracker://auth-callback`（古いリンクのため。Site URL は既定のまま）
+- 手動の連携 OFF・匿名のサインイン OFF（M24）
+- パスワードの最低の長さ・文字種（12 文字・英字と数字）はサーバーに残るが、アプリでは使わない
+- 漏えいしたパスワードの検査は Pro 以上の機能なので使わない（advisor の WARN が 1 件残る）
+
+**当時の案と経緯（10-22 より前。下の事実の表と「メールの送り方」は今も当てはまる）**
 
 - メールの確認を有効にする（本人の指示）。手動の連携は無効のまま（既定の状態は文書に無いので、本人のダッシュボードで確かめる）。匿名のサインインは無効（M24）
 - 【2026-10-22 変更】サインインはパスワードレス（メールのコード＋Google）になったので、下のパスワードの長さ・文字種は使わない（サーバーの設定は残る）
@@ -233,6 +274,7 @@
   - `supabase start`（CLI・本物の auth 付き）の方が忠実だが、repo は CLI を使わない方針（0001 の注記）なので、スタブで足りる【推測】
   - 人の切り替え: `SET ROLE authenticated; SELECT set_config('request.jwt.claims', '{"sub":"<uuid A>"}', true);` で A になる。テスト用のユーザーは `INSERT INTO auth.users VALUES (gen_random_uuid())` で 2 件
   - 見ること: 2 人のテスト用ユーザーで片方の行がもう片方から 0 行、`SET ROLE anon` で 42501、全関数が本人の行だけを書く、§2 の一意が人ごとに効く、睡眠の重なりが人ごとに効く、セットの削除と並べ替えが通る（M3 の `SET CONSTRAINTS`）
+  - 【今の形】`supabase/test/run.sh`: `postgres:17` に `auth_stub.sql` → 0001 から全部 → `plpgsql_check` → `multiuser_test.sql`（計画 §1-5 の 1〜10）→ `checks.sql`（RLS・権限・既定の権限・関数・外部キー・0015 の日。本番でも同じものを読むだけで流す）。`--rollback <番号>` は戻しの差分、`--dump <写し> --from <番号> --owner <UID> --grow <表>=<N>` は本番の写しでのリハーサル（行数の照合つき）
   - RLS の付け忘れは機械的に見る: `SELECT relname FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind = 'r' AND NOT relrowsecurity`（0 行）と `SELECT tablename FROM pg_tables WHERE schemaname = 'public' EXCEPT SELECT tablename FROM pg_policies`（0 行）
 - **本番適用の確かめ**（MCP で読むだけ。1 セットにして実装計画に書く・M28）
   1. RLS: 上の 2 つの SQL が 0 行
@@ -241,8 +283,12 @@
   4. advisor（security）: RLS の ERROR 0・view の ERROR 0・search_path の WARN 0・SECURITY DEFINER の WARN 0（v1 の 6 関数を消した後）
   5. アプリ: 本人でサインインして全タブ・ウィジェット。テスト用の 2 人目（使わない v1 のユーザー・M27）で全タブが空。anon の `curl`（`apikey` だけ）で 401／403（42501）
   - 注意【事実】: RLS は MCP（postgres）には効かないので、確かめの SELECT は今までどおり全行が見える。「MCP で見えるから RLS が効いていない」と取り違えない
+  - 本番の結果（10-23 00:43・計画の作業時間）: checks 31 項目すべて t・関数の定義の md5 がリハーサルと同じ・本人の行は 0014 の前の件数と一致・2 人目は 0 行・anon は 401・advisor は漏えいしたパスワードの検査の WARN 1 件だけ
+- **MCP と service キーで書くときの注意**（SQL レビュー S6・S10）【事実】
+  - MCP（postgres）で行を入れるときは `user_id` を明示する（UID は vault の memory。repo には書かない）。書き忘れると、`exercise` 以外は NOT NULL で止まる。`exercise` は NULL 可なので、`user_id` を書かないと共有の種目になる（全員の一覧に出る）。本人だけの種目は `user_id` = 本人を書く。共有の種目を足すのは migration で（0016 と同じ）
+  - `service_role`（service キー）は RLS を越えるが、`private` の関数の EXECUTE を持たず、`auth.uid()` も NULL になる。Edge Function などで service キーから RPC を呼ぶ日は、`private` の EXECUTE を足し、`user_id` を引数で明示する形が要る（食事の AI の段階 1c で効く）
 - シミュレータで全タブ（予定・トレーニング・睡眠・プロフィール・ウィジェット）を、サインインした状態とサインアウトした状態で確かめる
-- docs の更新: 「RLS 無効」の記述・INV-2 などの 1 人前提・spec.md の「個人ツール」・本番適用の手順の期待値（§5）・`meal-weight-design.md` の user_id の記述（棚卸し §3-4）。加えて次の 3 つ
+- docs の更新【10-23 段階 4 で済み。直した所の一覧は計画 §4-1】: 「RLS 無効」の記述・INV-2 などの 1 人前提・spec.md の「個人ツール」・本番適用の手順の期待値（§5）・`meal-weight-design.md` の user_id の記述（棚卸し §3-4）。加えて次の 3 つ
   - `gymwork-alignment-design.md` の R-3 の周り: 「MCP の INSERT は `user_id` を明示する（UID は memory）。子の表は複合の外部キーが持ち主の食い違いを止める」。種目の自作は `exercise`（`user_id` = 本人）、アーカイブ・メモは `exercise_preference`。アプリから自作できるようにするかは今回の範囲外（M25）
   - `apply_migration` のトランザクションの確かめの結果（0007 の注記の代わり・M10）
   - `meal-weight-design.md`（食事の実装の前に直す・M26）: §2 の冒頭に次の一覧を注記し、:242 を「10-19 の決定で上書き」と直す
@@ -252,9 +298,15 @@
 
 ### 10. 将来ほかの人に使ってもらうときに残る点（この作業ではしない）
 
+【10-23 更新】サインインと人ごとのデータは済み（0014・パスワードレス）。メールの送り手も U8 で誰にでも送れる。下は配る前に残る点（いつ配るかは決まっていない）。
+
 - 配る手段: Apple Developer Program（TestFlight・App Store）。入ると Sign in with Apple・パスキー・Universal Links も使える
-- App Store で配るときは Sign in with Apple も要る。審査ガイドライン 4.8 は、Google のような第三者のログインで主なアカウントを作るアプリに、同等のログイン（名前とメールだけ・メールを隠せる・広告目的で集めない）も出すよう求めている【事実】。配る段階で足す（M29。https://developer.apple.com/app-store/review/guidelines/#login-services）
-- 確認メール: 外部の SMTP
+- 審査用の入り方（審査ガイドライン 2.1(a)）: メールのコードと Google だけでは、審査の人が入る口が無い。審査用のアカウントの入り方を決める（`auth-method-research-2026-10-22.md`）
+- アプリの中でのアカウントの削除（5.1.1(v)）: アカウントを作れるアプリは、アプリの中から削除できる必要がある。今は無い。`auth.users` から消すと、全表の行は `ON DELETE CASCADE` で消える（§1）
+- Google の同意の画面を「テスト」から公開に（今はテストユーザーだけが Google で入れる）
+- ボットのサインアップへの守り（CAPTCHA）。サインアップは開いていて、URL と anon キーで誰でも呼べる
+- App Store で配るときは Sign in with Apple も要る（本人 10-22 15:0x「Program に入るときに足す（推奨）」）。審査ガイドライン 4.8 は、Google のような第三者のログインで主なアカウントを作るアプリに、同等のログイン（名前とメールだけ・メールを隠せる・広告目的で集めない）も出すよう求めている【事実】。配る段階で足す（M29。https://developer.apple.com/app-store/review/guidelines/#login-services）
+- ~~確認メール: 外部の SMTP~~ → 済み（U8・送るためだけの Gmail の SMTP。§8）
 - 強さの基準の数字（strengthlevel.com から写したもの）は「個人用アプリの中だけで使う・再配布しない」前提（棚卸し §3-3）。配る前に外すか置き換える【要確認・そのとき】
 - 店の栄養表示（食事の段階 3）は私的使用の前提。人ごとに持つか、配る前に扱いを決める
 - 日は JST 固定・週は月曜始まり（A7）、INV-10 の本人の決めた値（刻み・休憩 3:00）、オンボーディングが無いこと（棚卸し §3-3）
@@ -282,7 +334,7 @@
 ## AI 既定として本人に知らせる（違えば言ってもらう）
 
 - **種目（元の問い A）**: 159 件は全員で共有のマスタにし、自作の種目・アーカイブ・メモは人ごとにする。アプリは読む先を view に変えるだけで、画像と強さの基準は今のまま（§3・案 1＋M16）。表の形なので、後から変えるには migration が要る
-- **新規登録（元の問い D）**: 複数人化が終わっても、配る準備（Program・外部の SMTP）ができるまで閉じる。ダッシュボードのトグル 1 つで開ける（§8）
+- **新規登録（元の問い D）**: 複数人化が終わっても、配る準備（Program・外部の SMTP）ができるまで閉じる。ダッシュボードのトグル 1 つで開ける（§8）【10-22 12:0x 本人「今すぐ開ける」で取りやめ。今は開いている】
 - **使わない v1 のユーザー（M27）**: 消さずに、テスト用の 2 人目にする。付け替えた側を取り違えて消すと、記録ごと消えるため（§6）
 - 聞かなくてよいと判断したもの（レビュー §7）: 確認メールをリンクにするか 6 桁コードにするか（本人の言葉がリンク。後から替えられる・M18）、`ensure_user_defaults` を RPC にするかトリガーにするか（RPC・M9）、v1 の残りの 6 関数を消すか（消す）、0013 を先に流すか（先に流す・M14）
 
@@ -293,3 +345,4 @@
 - 2026-10-19 14:32〜14:37 レビュー（M1〜M30）の「AI が直してよい点」と M24・M29 を反映。見出しを「設計（レビュー反映・本人未確認）」に、本人に聞くことを 1 問（B＋C）に、A・D・M27 を AI 既定に（サブエージェント）
 - 2026-10-19 14:4x 本人回答（今のデータは 2026-04-14 作成の Gmail のアカウント）を記録。M13・M19 を §6・§7 に反映
 - 2026-10-19 14:4x 本人「実装計画へ」→ 14:55 `auth-multiuser-implementation-plan.md` の下書き（設計から変えた 3 点は計画の「本人に聞くこと・知らせること」）→ 15:0x〜15:4x deep-task のレビュー（P1〜P24・高 2）→ 15:4x 計画に反映し、設計の各節に注記
+- 2026-10-23 05:2x 段階 4（計画 §4-1）: 見出しを本番適用済みに・§1 の外部キー（19 本の中身・0015 の形）・§2 D5 と A3・§3 の 160 件・§5 の権限と既定の権限・§7 と §8 を今の形（パスワードレス）にして前の案を畳んだ・§9 に今の確かめと S6・S10・§10 に配る前に残る点

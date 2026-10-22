@@ -1,7 +1,7 @@
 # Life Tracker v2 — ドメインモデル v16
 
 > **2026-09-30 追記（予定タブ段階 1。詳細 SSOT は `day-cycle-walkthrough.md`「段階 1 確定仕様」）**
-> - 繰り返しの予定は**世代管理**: `task_template` は系列の id を保つ表になり、中身は `task_template_version`（effective_from ごと、`is_ended` = これ以降を削除）に持つ。祝日パターンへの登録も `pattern_version_membership` で世代ごと（migration 0006、本番適用済）。`task_template` の旧列と `pattern_template_membership` は 0013（10/14: 時刻のないやることが 0012 を使用、`untimed-tasks-design.md`。10/7: プロフィール/体重 `user_profile`・`body_weight_record` が 0011 を使用、`body-strength-and-heatmap-period.md`） で削除予定（実機確認後。0007 は段階 2 のチェックイン、0008 はトレーニングのセット連番、0009 は睡眠の sleep_record、0010 はトレーニングの workout_entry で使用）
+> - 繰り返しの予定は**世代管理**: `task_template` は系列の id を保つ表になり、中身は `task_template_version`（effective_from ごと、`is_ended` = これ以降を削除）に持つ。祝日パターンへの登録も `pattern_version_membership` で世代ごと（migration 0006、本番適用済）。`task_template` の旧列と `pattern_template_membership` は 0013（10/14: 時刻のないやることが 0012 を使用、`untimed-tasks-design.md`。10/7: プロフィール/体重 `user_profile`・`body_weight_record` が 0011 を使用、`body-strength-and-heatmap-period.md`） で削除予定（実機確認後。**2026-10-23 00:27 に 0013 を本番に流して削除済み**。0007 は段階 2 のチェックイン、0008 はトレーニングのセット連番、0009 は睡眠の sleep_record、0010 はトレーニングの workout_entry で使用）
 > - 下の「F-A 3 択」「E-A」は、**「この予定」「これ以降のすべての予定」の 2 択**（過去日は編集不可のため Google の「すべて」= 編集日以降）に置き換えた。書き込みは DB 関数（RPC）で原子的に行い、関数内で「編集日 ≥ JST の今日」を検査する
 > - 休日パターン（apply_day = Holiday）は常に 1 件ある前提（0006 で固定。アプリは作らない）。第 1 世代の effective_from = 2026-04-26 は近似
 > - 未来日表示は前倒し（spec.md）
@@ -11,6 +11,10 @@
 > - `scheduled_task` に回の日 `occurrence_date`（時刻つきは開始の JST 日）と `created_at` を足し、同じ系列の同じ日の一意索引を `(template_id, occurrence_date)` に置き換えた。日の判定は start_at でなくこの列
 > - 回数はタップ 1 回 = 1 行の `actual_task_tap`。閉じた日（目標の回数目のタップの日とスキップした日の早い方）は保存しない
 > - 仕様の詳細は `untimed-tasks-design.md`（本人決定）・`untimed-tasks-implementation-plan.md`（細部）・`day-cycle-walkthrough.md`「時刻のないやること」。正の定義は `supabase/migrations/0012_untimed_tasks.sql`
+
+> **2026-10-23 追記（サインインと人ごとのデータ。migration 0013・0014、2026-10-23 本番適用済み。下の「人ごとのデータ」の節）**
+> - 全部の表に `user_id`（`auth.users` を指す・既定値 `auth.uid()`）と RLS。人は自分の行だけを読み書きできる。種目 `exercise` だけは共有の行（`user_id` NULL）を全員が読める
+> - 下の DDL の各表は 0014 の前の形のまま。`user_id`・主キー・一意・外部キーの組・索引・権限の変わり方は「人ごとのデータ」の節にまとめた。正の定義は `supabase/migrations/0014_multiuser_rls.sql`、設計は `auth-multiuser-design.md`
 
 DDL レベル + 設計判断 + DayBuilder + Phase 2 持ち越し論点を集約した SSOT。
 
@@ -210,6 +214,7 @@ CREATE TABLE exercise (
   sort_order   INT
 );
 
+-- 2026-10-23 (0014): is_archived・note は人ごとの exercise_preference に移した。名前の一意は「共有の中で」と「人ごとの中で」の 2 つに (下の「人ごとのデータ」)
 CREATE UNIQUE INDEX exercise_name_unique ON exercise (name);
 CREATE INDEX exercise_muscle_group_idx ON exercise (muscle_group) WHERE is_archived = false;
 
@@ -236,7 +241,7 @@ CREATE TABLE routine_exercise (
 
 CREATE INDEX routine_exercise_exercise_idx ON routine_exercise (exercise_id);
 
--- 2026-10-23 (migration 0015・10-23 時点で本番は未適用): トレーニングの日 day DATE NOT NULL をセッションとセットに持つ。セッションの day = 記録した日
+-- 2026-10-23 (migration 0015・2026-10-23 04:31 本番適用済み): トレーニングの日 day DATE NOT NULL をセッションとセットに持つ。セッションの day = 記録した日
 --   (トレーニングのタブの週の帯で選んでいた日。前の日は翌日 2:00 まで記録できる)。セットの day = セッションの day ((session_id, user_id, day) の外部キー)。
 --   1 人 1 日 1 セッション (UNIQUE (user_id, day))。started_at・completed_at は day の 0:00〜翌日 2:00 の中 (CHECK)。下の「進行中は同時 1 件」は 0015 で消した
 --   (前の日と今日が同時に開きうる)。集計の日はすべて set.day (completed_at は時刻の幅にだけ使う)。workout_set → workout_entry の外部キーは session_id も組に入れた。
@@ -336,14 +341,14 @@ CREATE TABLE actual_task_tap (
 );
 CREATE INDEX actual_task_tap_actual_idx ON actual_task_tap (actual_task_id, tapped_at);
 -- backfill: 回につながる既存の done に 1 行 (tapped_at = end_at)。回数 1 ≥ 目標 1 = 今の「やった」と同じ
--- 表の権限は Supabase の既定 (anon・authenticated に開く。RLS 無効。0009 と同じ)
+-- 表の権限は Supabase の既定 (anon・authenticated に開く。RLS 無効。0009 と同じ)  ← 0014 で変わった (anon は何もできない・RLS。下の「人ごとのデータ」)
 ```
 
 - 回数 = タップの数。完了 = 回数 ≥ その回の目標。**閉じた日** = 目標の回数目のタップの JST 日と、スキップした日（`skipped_on`。NULL なら回の日）の早い方。保存しない（タップ・目標・skipped_on から毎回求める）
 - 回の目標 = 単発はその実体、系列は O(d) があればその実体、無ければ d に効く世代（effective_from ≤ d の最新）。d に効く世代が終了の世代なら回は無い（目標は 1 として扱う）
 
 ### 関数
-内部の関数は PostgREST が公開しないスキーマ `private` に置く（`REVOKE ... FROM PUBLIC`、anon・authenticated に USAGE と EXECUTE。SECURITY INVOKER）。public に置いて REVOKE すると、公開の RPC が中から呼んだ時点で anon の権限不足になる（INVOKER の関数は中から呼ぶ関数にも呼んだ人の EXECUTE が要る。2026-10-14 使い捨て DB で実測）。API からは 404。
+内部の関数は PostgREST が公開しないスキーマ `private` に置く（`REVOKE ... FROM PUBLIC`、anon・authenticated に USAGE と EXECUTE。SECURITY INVOKER。【0014 で anon の USAGE と EXECUTE を外した。今は authenticated だけ】）。public に置いて REVOKE すると、公開の RPC が中から呼んだ時点で anon の権限不足になる（INVOKER の関数は中から呼ぶ関数にも呼んだ人の EXECUTE が要る。2026-10-14 使い捨て DB で実測）。API からは 404。
 
 | 内部 (`private`) | 中身 |
 |---|---|
@@ -353,7 +358,7 @@ CREATE INDEX actual_task_tap_actual_idx ON actual_task_tap (actual_task_id, tapp
 | `schedule_assert_single_editable(id, new_date, new_untimed)` | 単発を変えてよいか（`day-cycle-walkthrough.md`「時刻のないやること」の表） |
 | `record_occurrence_checked(template, date, single)` | 回数の操作の共通の検査（回がある・回の日 ≤ 今日・時刻つきで目標 1 でない） |
 
-公開の RPC（anon・authenticated。引数は名前で呼ぶ。既定値なし）:
+公開の RPC（anon・authenticated。引数は名前で呼ぶ。既定値なし。【0014 から authenticated だけ】）:
 
 | 関数 | 引数 | 0012 での変更 |
 |---|---|---|
@@ -373,6 +378,70 @@ CREATE INDEX actual_task_tap_actual_idx ON actual_task_tap (actual_task_id, tapp
 | `todo_fetch` | p_date, p_from, p_count_from | 新規。やることの節の 1 往復の読み取り（jsonb: singles・overrides・actuals・taps・exdates・day_metas・older_closed） |
 
 - `record_*` は時刻なしの回と、時刻つきで目標 2 以上の回だけが使う。時刻つきで目標 1 の回は今の `checkin_set` / `checkin_clear`（4 本とも拒否する）
+
+---
+
+## 人ごとのデータ (migration 0013・0014・2026-10-23)
+
+正の定義は `supabase/migrations/0013_drop_legacy_template.sql`（`v2_drop_legacy_template`・2026-10-23 00:27 本番適用済み）と `0014_multiuser_rls.sql`（`v2_multiuser_rls`・00:43 本番適用済み）。設計と理由は `auth-multiuser-design.md`、確かめは `supabase/test/checks.sql`・`multiuser_test.sql`。ここは 0013・0014 で変わったところだけを抜き出したもの。
+
+### 0013: 旧い列と表を消した
+
+- `pattern_template_membership` を消した（祝日の登録は 0006 から `pattern_version_membership`）
+- `task_template` の中身の列 5 つ（`name`・`category_id`・`start_minutes_from_midnight`・`duration_minutes`・`rrule`）を消した。`task_template` は系列の id（と 0014 の `user_id`）だけの表。中身は `task_template_version`
+- 上の DDL・「反復ルール」「DayBuilder」の節の `task_template.rrule`・`pattern_template_membership` は、0006 より前の設計の記録として読む
+
+### 0014: 誰のデータか
+
+```sql
+-- 全部の表 (21) に。exercise だけは NULL 可 (NULL = 共有の種目)
+user_id uuid NOT NULL DEFAULT auth.uid() REFERENCES auth.users (id) ON DELETE CASCADE
+
+-- 親 8 表 (category・scheduled_task・task_template・actual_task・pattern・task_template_version・routine・workout_session) に
+UNIQUE (id, user_id)
+-- 子の外部キーは (親の id, user_id) の組 (19 本)。SET NULL は列を指定する形 (例 ON DELETE SET NULL (template_id)) で user_id を消さない
+-- exercise を指す 3 本 (routine_exercise・workout_entry・workout_set) は組にしない (共有の行は user_id が NULL)
+
+-- 1 人前提の形の置き換え
+user_profile        PRIMARY KEY (user_id)                 -- id = 1 の 1 行 → 人ごとに 1 行 (id 列は消した)
+body_weight_record  PRIMARY KEY (user_id, recorded_on)
+day_meta            PRIMARY KEY (user_id, date)
+training_goal       UNIQUE (user_id, effective_from)
+sleep_record        EXCLUDE USING gist (user_id WITH =, tstzrange(start_at, end_at) WITH &&)   -- btree_gist (extensions)
+pattern             UNIQUE INDEX (user_id, apply_day) WHERE apply_day IS NOT NULL
+category            UNIQUE INDEX (user_id, sub_input_kind) WHERE sub_input_kind IS NOT NULL   -- ensure_user_defaults の砦
+-- 進行中のセッションの一意 (user_id) WHERE ended_at IS NULL は 0015 で消し、UNIQUE (user_id, day) に替えた
+
+-- 種目: 共有のマスタ (user_id NULL・API からはだれも書けない) と人ごとの自作・設定
+CREATE UNIQUE INDEX exercise_shared_name_unique ON exercise (name) WHERE user_id IS NULL;
+CREATE UNIQUE INDEX exercise_user_name_unique   ON exercise (user_id, name) WHERE user_id IS NOT NULL;
+CREATE TABLE exercise_preference (
+  user_id     uuid    NOT NULL DEFAULT auth.uid() REFERENCES auth.users (id) ON DELETE CASCADE,
+  exercise_id uuid    NOT NULL REFERENCES exercise (id) ON DELETE CASCADE,
+  is_archived boolean NOT NULL DEFAULT false,
+  note        text,
+  sort_order  integer,                -- NULL = マスタの並び (exercise.sort_order)
+  PRIMARY KEY (user_id, exercise_id)
+);
+-- アプリが読む種目の一覧 (今の Exercise と同じ列の形)。結合の条件に本人を入れる
+CREATE VIEW exercise_for_user WITH (security_invoker = true) AS
+SELECT e.id, e.name, e.muscle_group, e.equipment, e.metric_kind, p.note,
+       COALESCE(p.is_archived, false) AS is_archived, COALESCE(p.sort_order, e.sort_order) AS sort_order
+FROM exercise e
+LEFT JOIN exercise_preference p ON p.exercise_id = e.id AND p.user_id = (SELECT auth.uid());
+-- workout_training_day も security_invoker = true (本人の日だけ)
+```
+
+- 索引: 全表に `user_id` が先頭の（部分でない）索引がある。範囲で読む表は `(user_id, 今の列)`
+- 共有の種目は 0004 の 159 件と 0016 の 1 件（スミスマシンインクラインベンチプレス・sort_order 120）で 160 件。共有の種目を足すのは migration で（MCP で `user_id` を書かずに入れると共有になる）
+
+### 0014: 権限と RLS
+
+- RLS は全表で有効。policy は `TO authenticated` で、ほとんどの表は 1 つ（`own_rows`: `FOR ALL USING (user_id = (select auth.uid())) WITH CHECK (同じ)`）。`exercise` だけは 4 つ（読むのは共有の行と本人の行・書くのは本人の行だけ）。計 24
+- anon: 表・view・関数のどれにも権限が無い（`private` の USAGE も無い）。authenticated: 表に SELECT・INSERT・UPDATE・DELETE（TRUNCATE・REFERENCES・TRIGGER・MAINTAIN は無い）、view に SELECT だけ、全関数の EXECUTE。`service_role` は触っていない（`private` の EXECUTE は無い）
+- 既定の権限: グローバルの `ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC` と、`IN SCHEMA public` で anon から全部・authenticated から TRUNCATE ほか。これから作る物も閉じた形で作られる。それでも新しい migration には GRANT と REVOKE を書く
+- 関数: 全部 SECURITY INVOKER・`SET search_path = ''`・中の名前は `public.`／`private.` 付き。v1 の残りの関数 6 つは消した。`ensure_user_defaults()`（サインインの直後にアプリが呼ぶ。休日パターン・種類「ジム」「睡眠」が無ければ作る。何度呼んでも同じ）を足した。0015 のトリガー関数 2 つと合わせて 31 個
+- MCP（postgres）は RLS を越える。MCP で行を入れるときは `user_id` を明示する（UID は repo に書かない）
 
 ---
 

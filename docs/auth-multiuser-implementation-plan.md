@@ -25,7 +25,7 @@
 3. 単体テストが全件通る。UI テストが本番につながずに通る
 4. シミュレータで、サインインした状態とサインアウトした状態の全タブ（予定・トレーニング・睡眠・プロフィール）とウィジェットを確かめる
 5. 本番で、§3-2 の確かめが全部通る
-6. docs の更新（§4 の一覧）が終わっている
+6. docs の更新（§4 の一覧）が終わっている【10-23 段階 4・§4-1】
 
 ---
 
@@ -60,7 +60,7 @@
 |---|---|---|---|
 | U1 | Supabase のプランを確かめる（Free か） | 段階 1 の前 | Free ならバックアップは本人の `pg_dump` だけ。**10-21 本人「U1：Free」** |
 | U2 | Google Cloud: プロジェクト・OAuth の同意画面（テスト・本人の Gmail をテストユーザーに）・iOS 用と Web 用のクライアント | 段階 2 の Google の前 | iOS のクライアント ID は本人が `LifeTracker.xcconfig` に入れる（AI が行を用意） |
-| U3 | Supabase のダッシュボード: メールの確認 ON・パスワード 12 文字以上で英字と数字・戻り先 `lifetracker://auth-callback`・Google の provider（2 つのクライアント ID）・新規登録 OFF・手動の連携 OFF・匿名 OFF | 段階 2 のサインインの確かめの前 | 「Skip nonce check」は ON にしない（§2-3）。**10-22 変更**: 新規登録は ON にした（本人）。パスワードの長さと文字種は、パスワードを使わなくなったので効かない |
+| U3 | Supabase のダッシュボード: メールの確認 ON・パスワード 12 文字以上で英字と数字・戻り先 `lifetracker://auth-callback`・Google の provider（2 つのクライアント ID）・新規登録 OFF・手動の連携 OFF・匿名 OFF | 段階 2 のサインインの確かめの前 | 「Skip nonce check」は ON にしない（§2-3）。**10-22 変更**: 新規登録は ON にした（本人）。パスワードの長さと文字種は、パスワードを使わなくなったので効かない。**10-23 段階 4**: 今の設定の一覧は設計 §8 |
 | U4 | 本番のバックアップ（本人のターミナルで `pg_dump`） | 段階 3 の最初 | 手順は §3-1。パスワードは聞かれたときに入れる。`!` は使わない（会話に残るため） |
 | U5 | 本番 migration の確認の画面をすぐ承認する | 段階 3 | 0013・0014 とも DROP を含むので 2 回出る。遅れると `cancelled` で何も流れない |
 | U6 | 実機に新しいビルドを入れ、サインインの画面まで見る（Xcode・iPhone をつないでおく） | 段階 3 の 0013 の直前（P4） | 入れてから 0014 まではトレーニングタブが使えない |
@@ -187,7 +187,21 @@
 
 ### 2-1. 認証の層（新しいファイル。`Sources/Auth/`）
 
-【10-22 15:3x 変更・本人の決定】サインインはパスワードレス（メールの 6 桁のコード＋Google）に作り替えた。この節のパスワード・新規登録・確認・再設定・新しいパスワード・`AuthFeatures` の記述は古い（段階 4 で書き直す）。今の形は作業時間の 10-22 15:3x の行
+**今の形**（10-22 15:3x のパスワードレスへの作り替えの後。10-23 段階 4 で書き直した。画面・文言・失敗の分け方は設計 §7）
+
+- `AuthService`（protocol）: `authChanges()`（状態の流れ。最初に必ず `.initialSession`）・`sendEmailCode(email:)`（`signInWithOTP(email:redirectTo:shouldCreateUser: true)`）・`verifyEmailCode(email:code:)`（`verifyOTP(type: .email)`。新しい人も登録済みの人も同じ）・`signInWithGoogle(idToken:accessToken:rawNonce:)`・`session(from:)`（古いリンクのため）・`signOut()`・`currentEmail`（端末のセッションの user の email。通信しない）
+  - `SupabaseAuthService`: 今の共有の `SupabaseClient` の `auth` を包む
+  - `MockAuthService`（DEBUG とテスト）: メモリ上。コードは `123456`
+- `AuthStore`（`@MainActor`・`ObservableObject`）: 状態は「起動中」「未サインイン」「コードの入力（メールアドレス）」「サインイン済み（UID）」の 4 つ
+  - `authStateChanges` を 1 本だけ購読し、`.initialSession` を受けるまでは「起動中」。`emitLocalSessionAsInitialSession: true` で、期限切れのセッションもサインイン済みとして画面を出し、`.signedOut` が来たときだけサインインの画面に戻る（下の当時の記述の理由がそのまま当てはまる）
+  - コードの確かめ・リンクの処理の間に supabase-swift が流す `.signedIn` は使わない（`sessionHandoffsInFlight`）。処理の側がサインイン済みにし、片付け（`onSignedOut`→`onSignedIn`）と `ensure_user_defaults()`（UID ごとに 1 回・失敗しても画面は出す）を 1 回ずつ呼ぶ
+  - 送り直しは 60 秒の待ち（同じ人へのメールは 60 秒に 1 回）。コードの画面から戻ったとき、最後に入れたメールアドレスを欄に残す（メモリだけ）
+- 失敗は `AuthFailure` で投げる（supabase-swift の型を画面側に出さない）
+- 古いリンク（`lifetracker://auth-callback`）: PKCE の `code` ならセッションを作ってサインイン済み、implicit 形式なら「メールアドレスを確認しました」を出すだけ（セッションは作らない）、失敗は文言（P19）
+- クライアントの設定（`LifeTrackerApp.makeClient()`）: `redirectToURL: lifetracker://auth-callback`・`flowType: .pkce`・`emitLocalSessionAsInitialSession: true`
+- 消したもの: パスワード・新規登録・確認・再設定・新しいパスワードの流れと状態、`PasswordPolicy`・`AuthFeatures`。再設定の印のキーは起動のたびに消す（`ObsoleteAuthKeys`）
+
+**当時の記述（10-21〜22。パスワードとリンク。今は使っていない）**
 
 - `AuthService`（protocol）: サインイン・新規登録・確認メールの再送・再設定のメール・新しいパスワード・Google の ID トークンでのサインイン・サインアウト・URL からのセッション・状態の流れ（`AsyncStream`）
   - `SupabaseAuthService`: 今の共有の `SupabaseClient` の `auth` を包む
@@ -208,7 +222,13 @@
 
 ### 2-2. 画面（新しいファイル。`Views/Auth/`）
 
-【10-22 15:3x 変更・本人の決定】サインインはパスワードレス（メールの 6 桁のコード＋Google）に作り替えた。この節のパスワード・新規登録・確認・再設定・新しいパスワード・`AuthFeatures` の記述は古い（段階 4 で書き直す）。今の形は作業時間の 10-22 15:3x の行
+**今の形**（10-22 15:3x の作り替えの後。見た目と文言は設計 §7）
+
+- 起動画面（`AuthLaunchView`）・サインイン（`SignInView`。「LifeTracker」・見出し「サインイン・サインアップ」・メールの欄・「コードを送る」・「または」・Google）・コード（`EmailCodeView`。見出し「入力したメールアドレスに届いた認証コードを入力してください」・送り先と「変更」・6 つの枠・「認証」・60 秒の送り直し）の 3 つ。共通の外枠 `AuthScreen`（縦の真ん中）と部品（`AuthFormParts`・`AuthGoogleButton`）
+- 文言はすべて日本語。言葉は「サインイン」「サインアップ」「サインアウト」に揃える。説明の一文は置かない（本人 10-22 15:1x）
+- サインアウトはプロフィールのタブの節「アカウント」（`SignOutSection`・確認つき。§2-6）
+
+**当時の記述（10-21〜22。パスワード・新規登録・再設定の画面。今は無い）**
 
 - 起動中（今の起動画面と同じ見た目）・サインイン（メールとパスワード／新規登録へ／パスワードを忘れた／Google で続ける）・新規登録・確認待ち（「このメールをこの iPhone で開いてください」・60 秒待ちの再送）・再設定のメールを送る・新しいパスワード
 - 【10-22 変更・本人の決定】画面は本人の参考（Slack・Amazon・Google のスクショ）の Slack 型に作り直した: 2 段（メール →「次へ」→ パスワード）・上に「LifeTracker」の文字・中央の見出し（説明文なし）・枠線の欄・青で塗った全幅の主のボタン・「または」の線・ほかのボタンと揃えた Google のボタン・補助は文字のリンク。閉じている間は新規登録の入口を出さない（`AuthFeatures.isSignUpOpen`）。確認・再設定はコードの画面（6 つの枠・送り直しの 60 秒）。経緯は作業時間の 10-22 の行と設計 §7
@@ -261,7 +281,12 @@
 
 ### 2-7. テスト
 
-【10-22 15:3x 変更・本人の決定】サインインはパスワードレス（メールの 6 桁のコード＋Google）に作り替えた。この節のパスワード・新規登録・確認・再設定・新しいパスワード・`AuthFeatures` の記述は古い（段階 4 で書き直す）。今の形は作業時間の 10-22 15:3x の行
+**今の形**（10-22 15:3x の作り替えの後。件数は作業時間の各行）
+
+- 単体テスト（Swift Testing）: `AuthStore` の状態の移り変わり（初期セッションあり／なし／期限切れ・`.signedOut`・人が変わる）／コードの流れ（送る → コード → サインイン済み／誤り／送り直し）と、確かめている間の `.signedIn` を無視する守り／古いリンクの失敗の文言（P19）／サインアウトの片付け（ウィジェットのキー）／42501 の 2 つの文言（P9）・`fetchTaps` の投げ分け・upsert の衝突先の文字列・テストの環境で `SupabaseClient` を作らない／nonce（乱数の SHA-256 の小文字の 16 進）／`AuthFailure` の分け方と言葉（`email_address_invalid` ほか）
+- UI テスト: 起動する 3 か所すべてに `["-mock-day", "-mock-workout", "-mock-auth"]`。`testSignInWithCode`（`-mock-auth-signed-out` → メール → コード `123456` → タブ）・`testSignInThenSignOutFromProfile`（プロフィールのタブからサインアウト → サインインの画面）。日またぎの `testRecordPreviousDayAfterMidnight` も同じ起動引数
+
+**当時の記述（10-21〜22。パスワードと再設定の印のテスト。今は無い）**
 
 - 単体テスト（Swift Testing）:
   - `AuthStore` の状態の移り変わり（初期セッションあり／なし／期限切れ・`.signedOut`・確認待ち）
@@ -275,6 +300,8 @@
 - UI テスト（P10）: 起動する 3 か所すべてに `["-mock-day", "-mock-workout", "-mock-auth"]` を渡す（`LifeTrackerUITests.swift:29` の `testExample`、`:38` の `measure` の中の `XCUIApplication()`、`LifeTrackerUITestsLaunchTests.swift:22`）。新しく 1 つ: `-mock-auth-signed-out` で起動 → サインインの画面 → 決まったメールとパスワード → タブが出る → サインアウト → サインインの画面
 
 ### 2-8. シミュレータでの確かめ（AI。idb の `screen`・`describe`・`tap`）
+
+【10-23 注記】2〜5 のパスワード・リンクの確かめは 10-21〜22 の当時の記録（作業時間 10-21 23:3x〜23:59）。パスワードレスの後の確かめは、シミュレータの画面（10-22 15:4x〜16:2x）と、本物の認証での登録済みの人の道（10-22 19:2x・本人）。新しい人の道（Confirm signup のコード）はまだ（10-23 本人「後ででいい」「1は後回し。」）
 
 1. `-mock-day -mock-workout -mock-auth`: 全タブが今と同じ（スクリーンショットを今のビルドと見比べる）
 2. `-mock-auth-signed-out`: サインインの画面・新規登録・再設定の画面の文言と並び
@@ -335,6 +362,27 @@
 - SQL レビュー（`auth-multiuser-sql-review-2026-10-19.md`）の docs の分: S6（`service_role` は `private` の関数を呼べない・`auth.uid()` も NULL。Edge Function などで service キーから RPC を呼ぶ日は、`private` の EXECUTE と user_id の明示が要る）・S10（MCP で `exercise` に user_id を書かないと共有の種目になる。自作は user_id を明示）を `gymwork-alignment-design.md` R-3 の周りか設計 §9 に
 - アプリのレビュー（`auth-multiuser-app-review-2026-10-21.md`）の docs の分: A13（「新しいパスワード」の途中で落とすとサインイン済みになる。設定画面ができたら「パスワードを変える」を置く）・A15（Keychain のセッションはアプリを削除しても残る見込み。端末を人に渡すときはサインアウト）を設計 §7 に。A6 は下の作業時間（10-21 23:08）
 - memory・daily の索引・作業時間
+
+### 4-1. 進め方（2026-10-23 05:2x 着手・本人「1は後回し。」＝新しい人の道の確かめより先に段階 4）
+
+- 直すのは、今の仕様として読まれる docs だけ。過去のレビュー・議論・調べの記録（`*-review-*`・`gymwork-discussion/`・`*-research-*`・棚卸し）と、流し済みの migration の注記（0007〜0012 の「RLS 無効」など。当時の事実で、本番の記録と md5 で比べるので触らない）は書き換えない。今の形は `domain-model.md` と設計に書き、そこから辿れるようにする
+- 事実は migration・`checks.sql`・コード・本番の記録（計画の作業時間）から取る。分からないものは推測で埋めない
+- 本人の方針の言葉は変えない（`spec.md` の核の定義「個人ツール」は本人の言葉。ポジショニングの節に 10-19・10-22 の本人の言葉と今の形を足す）
+- 0015（トレーニングの日）・0016（種目の追加）で変わった所も、今の形に合わせる
+
+| # | ファイル | 直すこと | 済 |
+|---|---|---|---|
+| 1 | 設計 `auth-multiuser-design.md` | 見出しを「実装・本番適用済み」に／§1 外部キー（0013 で −1、SQL レビュー S2 で `workout_set_entry_fk` も組、0015 で形が変わった。今は 19 本）／§2 D5（0015 で消えた）・A3（別のキー・P8）／§5・§9 の既定の権限（グローバルの行・MAINTAIN・P1・P12）／§7 をパスワードレスの今の形に（画面・状態・Google の nonce・42501 の 2 つの文言 P9・A15・サインアウトの範囲。A13 は画面が無くなり当たらない）／§8 の今の設定／§9 に S6・S10／§10 に配る前に残る点（審査用の入り方・Sign in with Apple・アカウントの削除ほか） | 済 |
+| 2 | 計画（このファイル） | §2-1・§2-2・§2-7 を今の形に（古い記述は注記の下に畳む）／U3 の行／§2-8 の 2〜5 は当時の記録と分かる注記／完了条件 6 | 済 |
+| 3 | `domain-model.md` | 0013・0014 の形（`task_template` は id と `user_id`・全表の `user_id`・RLS・`exercise_preference`・`exercise_for_user`・権限）／「RLS 無効」「anon・authenticated に開く」の記述に注記 | 済 |
+| 4 | `spec.md` | ポジショニングに 10-19・10-22 の本人の言葉と今の形（サインイン・人ごとのデータ）。配る手段は決まっていない | 済 |
+| 5 | `gymwork-alignment-design.md` | R-3 の周りに MCP の INSERT の `user_id`（S10）・service キーからの RPC（S6）・自作の種目と `exercise_preference` | 済 |
+| 6 | `continuity-design.md`:44 | 「anon から読み書き可・RLS 無効」に 0014 で変わった注記 | 済 |
+| 7 | `day-cycle-walkthrough.md`:196 | 0013 のチェックを済みに | 済 |
+| 8 | `meal-weight-design.md`（未追跡） | §2 の冒頭に設計 §9 の一覧（M26）・:248 を「10-19 の決定で上書き」 | 済 |
+| 9 | `auth-multiuser-user-steps.md` | パスワード・リンクの手順に今の形の注記（U3 ほか） | 済 |
+
+完了条件: 上の 9 つが済み／今の docs に、今の仕様としてパスワード・確認のリンク・RLS 無効の記述が残っていない（記録・注記を除く。grep で見る）／公開してはいけないもの（メールアドレス・UID・キー・ref・クライアント ID）を書いていない（走査）／memory・daily。commit・push は本人に言われてから
 
 ## 作業の順と分担（すべて直列・P21）
 
@@ -473,3 +521,5 @@
 - 2026-10-23 00:4x 本人が実機でアプリを起動し直してサインイン（最後のサインイン 00:49 JST【事実・auth.users】）→ 本人「全タブ OK」。`ensure_user_defaults` で行は増えていない（pattern 1・category 4・種類 2）【事実】。段階 3 の §3-2 は全部済み。次は U8（Gmail の SMTP）→ 新しい人の道（Confirm signup）の確かめ
 - 2026-10-23 01:0x 本人「U8済み」（送るためだけの Gmail・2 段階認証・アプリ パスワード・Supabase の SMTP の設定。アドレスとパスワードは会話・repo に書いていない）→ 新しい人の道の確かめに、iPhone 17 Pro のシミュレータを本物の認証・本物のデータで起動し直した（サインインの画面）
 - 2026-10-23 01:0x 本人「後ででいい？先にさっき決めたトレーニング側の修正を入れたい」→ 新しい人の道（U8 の Gmail で新規登録してコードが届くか）の確かめは後に回す。17 Pro のシミュレータは本物の認証・本物のデータでサインインの画面のまま
+- 2026-10-23 05:1x 本人「1は後回し。」（AI が示した次の順「1 新しい人の道 → 2 段階 4 → 3 食事の段階 1」への答え）→ 段階 4 に先に着手（新しい人の道はまだ後回し）
+- 2026-10-23 05:2x 段階 4（親）: §4-1 の 9 か所を直した（設計・この計画・`domain-model.md`・`spec.md`・`gymwork-alignment-design.md`・`continuity-design.md`・`day-cycle-walkthrough.md`・`meal-weight-design.md`（未追跡）・`auth-multiuser-user-steps.md`）。あわせて repo の `CLAUDE.md` の本番の migration の節に「GRANT と REVOKE・`user_id`・RLS を書く」「MCP で `user_id` を明示」の 2 行、vault の `positioning.md` の冒頭に今の状態の 1 行。`domain-model.md` の 0015 の注記「本番は未適用」も直した。過去のレビュー・議論の記録と流し済みの migration の注記は書き換えていない。足した行に公開してはいけないもの（メールアドレス・UID・キー・クライアント ID）が無いことを走査した。commit はまだ（本人に言われてから）

@@ -41,7 +41,7 @@
 - 既存の RestTimerWidget 拡張に同居させる（WidgetBundle に追加）
 
 ## 完了条件
-- [x] migration を書く（`supabase/migrations/0005_training_goal.sql`）。2026-09-30 本人 OK で本番 DB に適用（MCP apply_migration `v2_training_goal`。適用直後は目標 0 件・トレーニング日 0 件、anon から読み書き可・RLS 無効は既存テーブルと同じ）
+- [x] migration を書く（`supabase/migrations/0005_training_goal.sql`）。2026-09-30 本人 OK で本番 DB に適用（MCP apply_migration `v2_training_goal`。適用直後は目標 0 件・トレーニング日 0 件、anon から読み書き可・RLS 無効は既存テーブルと同じ）。【2026-10-23 の 0014 で変わった: `training_goal` も `user_id` つき・RLS・一意は `(user_id, effective_from)`・anon は何もできない。`domain-model.md`「人ごとのデータ」】
 - [x] pure 関数のテスト（`ContinuityTests` 9 件: 休息日で途切れない・週末で途切れる・目標変更・目標前の週・今週未達でも継続・0 件・ヒートマップの段階・目標の上書き）。単体テスト全体も成功
 - [x] モック（`-mock-workout`）でシミュレータ確認（2026-09-30）
   - 目標未設定で「週の目標回数を決める ›」→ 週 2 回で保存 →「🔥17日 ◯ 今週 2/2 · 達成」（モックの記録から手計算した値と一致）

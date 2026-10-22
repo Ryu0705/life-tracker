@@ -369,6 +369,8 @@ func replacePlannedExercise(_ oldId: UUID, with newId: UUID) async
 | R-7 INV-5 の言い換え | 「テーブルを増やさない」→「導出値を永続化しない。読み取り時の View/RPC 集計は可」 | 将来の `recorded_exercise` View は migration＝SSOT 改訂を伴う | 文言のみ | 同上 不変条件節 | 現文言のまま（1000 行対策の正攻法を封じる） |
 | R-8 週帯＋合計バーの固定表示 | なし → 上部に固定（≤ 120pt）、ナビは inline | 5 種目以上で下までスクロールしても「どの日か」「合計」が見える。縦が 120pt 減る | `safeAreaInset` → List 先頭行へ移すだけ | 同上 R-8 | 固定しない（✓ ごとの合計増加が見えない）/ 週帯だけ非固定（過去日閲覧中に日付が見えなくなる） |
 
+【2026-10-23 追記（サインインと人ごとのデータ・0014。SQL レビュー S10・S6）】R-3 の「MCP 直 INSERT で逃がす」と、上の「自作は MCP 登録で代替」は、0014 の後は `user_id` を明示する（UID は vault の memory。repo に書かない）。書き忘れると NOT NULL で止まる。ただし `exercise` は NULL 可なので止まらず、全員の一覧に出る共有の種目になる。本人だけの種目は `user_id` = 本人を書き、アーカイブ・メモは `exercise_preference` に。共有の種目を足すのは migration（0016）。子の表は外部キーの組が持ち主の食い違いを止める。アプリから自作できるようにするかは決めていない。service キーから RPC を呼ぶときの注意は `auth-multiuser-design.md` §9
+
 ---
 
 ### 6. 完了条件（機械チェック）
