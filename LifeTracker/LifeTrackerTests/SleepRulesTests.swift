@@ -230,7 +230,9 @@ struct SleepTimeRuleTests {
         #expect(SleepRules.message(for: PostgrestError(code: "23P01", message: "conflicting key value")) == "この時間には記録があります")
         #expect(SleepRules.message(for: PostgrestError(code: "23514", message: "violates check")) == "時刻を確かめてください")
         #expect(SleepRules.message(for: SleepRuleError.overlap(UUID())) == "この時間には記録があります")
-        #expect(SleepRules.message(for: PostgrestError(code: "42501", message: "denied")) == "denied")
+        // 42501 は data source の境界で DataAccessError になる (計画 §2-5・P9。端末にセッションがあれば「もう一度」、無ければ「サインインし直して」)
+        #expect(SleepRules.message(for: DataAccessError.couldNotVerify) == "確認できませんでした。もう一度お試しください")
+        #expect(SleepRules.message(for: DataAccessError.signInRequired) == "サインインし直してください")
     }
 }
 

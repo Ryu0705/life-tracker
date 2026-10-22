@@ -71,24 +71,45 @@ nonisolated enum Continuity {
 }
 
 /// アプリ → ウィジェットの受け渡し (App Group の UserDefaults)。数字ではなく元データを渡し、
-/// ウィジェット側で日付・週の切り替わりごとに計算し直す
+/// ウィジェット側で日付・週の切り替わりごとに計算し直す。
+/// サインインしているかは Snapshot とは別のキー (Snapshot の形を変えると今の保存が読めなくなるため。計画 §2-6・P8)
 nonisolated enum ContinuityShare {
     static let appGroup = "group.com.ryunosuke.LifeTracker"
-    private static let key = "continuity.v1"
+    static let snapshotKey = "continuity.v1"
+    /// サインインしているか (Bool)。サインアウトで false、サインインで true
+    static let signedInKey = "auth.signedIn.v1"
 
     struct Snapshot: Codable, Equatable {
         var trainingDays: [Date]
         var goals: [WeeklyGoal]
     }
 
-    static func save(_ snapshot: Snapshot) {
-        guard let defaults = UserDefaults(suiteName: appGroup),
-              let data = try? JSONEncoder().encode(snapshot) else { return }
-        defaults.set(data, forKey: key)
+    /// App Group の UserDefaults (テストは別の UserDefaults を差し込む)
+    static var sharedDefaults: UserDefaults? { UserDefaults(suiteName: appGroup) }
+
+    static func save(_ snapshot: Snapshot, defaults: UserDefaults? = ContinuityShare.sharedDefaults) {
+        guard let defaults, let data = try? JSONEncoder().encode(snapshot) else { return }
+        defaults.set(data, forKey: snapshotKey)
     }
 
-    static func load() -> Snapshot? {
-        guard let data = UserDefaults(suiteName: appGroup)?.data(forKey: key) else { return nil }
+    static func load(defaults: UserDefaults? = ContinuityShare.sharedDefaults) -> Snapshot? {
+        guard let data = defaults?.data(forKey: snapshotKey) else { return nil }
         return try? JSONDecoder().decode(Snapshot.self, from: data)
+    }
+
+    /// スナップショットを消す (サインアウトの後片付け。前の人の記録をウィジェットに残さない)
+    static func clearSnapshot(defaults: UserDefaults? = ContinuityShare.sharedDefaults) {
+        defaults?.removeObject(forKey: snapshotKey)
+    }
+
+    /// サインインしているか。キーが無い (サインインの入る前のビルドから移った直後) ときはサインイン済みとみなす
+    /// (新しいビルドを入れた直後に、ウィジェットが「サインインしてください」に変わらないように)
+    static func isSignedIn(defaults: UserDefaults? = ContinuityShare.sharedDefaults) -> Bool {
+        guard let value = defaults?.object(forKey: signedInKey) as? Bool else { return true }
+        return value
+    }
+
+    static func setSignedIn(_ signedIn: Bool, defaults: UserDefaults? = ContinuityShare.sharedDefaults) {
+        defaults?.set(signedIn, forKey: signedInKey)
     }
 }

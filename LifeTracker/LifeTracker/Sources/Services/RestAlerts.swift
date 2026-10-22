@@ -28,6 +28,13 @@ enum RestAlerts {
         await endActivities()
     }
 
+    /// サインアウトの後片付け (計画 §2-6): 休憩の終わりの通知の予約を消し、Live Activity を閉じる (待たない)
+    @MainActor
+    static func cancelAll() {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [notificationId])
+        Task { await endActivities() }
+    }
+
     /// 前回の起動から残った Live Activity を片付ける (アプリの起動時は休憩していない)
     static func endActivities() async {
         for activity in Activity<RestActivityAttributes>.activities {

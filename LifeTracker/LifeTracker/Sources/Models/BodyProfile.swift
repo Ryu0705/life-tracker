@@ -16,7 +16,7 @@ enum Sex: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-/// user_profile (1 行だけ)。年齢は生年月日から計算する (保存しない)
+/// user_profile (人ごとに 1 行)。年齢は生年月日から計算する (保存しない)
 struct UserProfile: Codable, Equatable {
     let sex: Sex
     @DateOnly var birthDate: Date
@@ -26,7 +26,7 @@ struct UserProfile: Codable, Equatable {
     }
 }
 
-/// body_weight_record (1 日 1 件。同じ日は上書き)
+/// body_weight_record (人ごとに 1 日 1 件。同じ日は上書き)
 struct BodyWeightRecord: Codable, Equatable, Hashable {
     @DateOnly var recordedOn: Date
     let weightKg: Double

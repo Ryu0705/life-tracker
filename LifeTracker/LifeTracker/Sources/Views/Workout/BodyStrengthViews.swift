@@ -159,8 +159,10 @@ struct BodyStrengthSections: View {
                 Button { sheet = .profile } label: {
                     Label("プロフィールを設定（性別・生年月日・体重）", systemImage: "person.crop.circle.badge.plus")
                 }
+                .accessibilityIdentifier("analysis.profile")
             case .needsWeight:
                 Button { sheet = .profile } label: { Label("体重を入力", systemImage: "scalemass") }
+                    .accessibilityIdentifier("analysis.profile")
             case .ready:
                 HStack {
                     Button { sheet = .weight } label: { weightLabel }
@@ -171,6 +173,7 @@ struct BodyStrengthSections: View {
                     }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("プロフィールを変更")
+                    .accessibilityIdentifier("analysis.profile")
                 }
             }
         }

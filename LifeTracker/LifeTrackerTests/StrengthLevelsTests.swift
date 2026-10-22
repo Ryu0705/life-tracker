@@ -494,5 +494,13 @@ struct ProfileStoreTests {
         await history.ensureLoaded(weekStarts: [day("2026-10-05")])
         #expect(mock.fetchRangeCallCount == 1 && history.isLoaded(weekStart: day("2026-10-05")))
     }
+
+    @Test("プロフィールのタブの生年月日の行: 日本時間の日付と、その日の時点の年齢 (誕生日の前日までは 1 つ下)")
+    func birthDateText() {
+        let profile = UserProfile(sex: .female, birthDate: day("2001-05-05"))
+        #expect(ProfileView.birthDateText(profile, today: day("2026-10-22"), calendar: jst) == "2001年5月5日（25歳）")
+        #expect(ProfileView.birthDateText(profile, today: day("2026-05-04"), calendar: jst) == "2001年5月5日（24歳）")
+        #expect(ProfileView.birthDateText(profile, today: day("2026-05-05"), calendar: jst) == "2001年5月5日（25歳）")
+    }
 }
 

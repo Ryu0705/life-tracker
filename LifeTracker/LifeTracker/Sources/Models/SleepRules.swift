@@ -348,9 +348,11 @@ enum SleepRules {
         CheckInPlanner.minutesOfDay(date, calendar: calendar)
     }
 
-    /// 保存・削除の失敗の文言。PostgREST の code: 23P01 (重なり) →「この時間には記録があります」、23514 (CHECK) →「時刻を確かめてください」
+    /// 保存・削除の失敗の文言。PostgREST の code: 23P01 (重なり) →「この時間には記録があります」、23514 (CHECK) →「時刻を確かめてください」。
+    /// 権限・トークンで断られたもの (42501・PGRST3xx) は data source の境界で DataAccessError になっている。その文言を出す (計画 §2-5・P9)
     static func message(for error: Error) -> String {
         if let rule = error as? SleepRuleError { return rule.errorDescription ?? "" }
+        if let access = error as? DataAccessError { return access.errorDescription ?? "" }
         switch (error as? PostgrestError)?.code {
         case "23P01": return "この時間には記録があります"
         case "23514": return "時刻を確かめてください"

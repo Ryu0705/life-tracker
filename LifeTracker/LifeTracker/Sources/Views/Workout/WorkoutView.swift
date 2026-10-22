@@ -10,7 +10,8 @@ struct WorkoutView: View {
     @StateObject private var programStore: ProgramStore
     /// 継続 (週 N 回基準の連続週数・今週のリング)。ウィジェットへの受け渡しもここから
     @StateObject private var continuity: ContinuityStore
-    @StateObject private var profileStore: ProfileStore
+    /// プロフィールと体重。プロフィールのタブと同じもの (MainTabView が 1 つ作って渡す。どちらで直してもすぐもう片方に出る)
+    @ObservedObject private var profileStore: ProfileStore
     @State private var isEditingGoal = false
     @State private var path = NavigationPath()
     @State private var picker: PickerRequest?
@@ -69,13 +70,13 @@ struct WorkoutView: View {
 
     private let calendar: Calendar
 
-    init(dataSource: WorkoutDataSource, calendar: Calendar = HomeView.defaultCalendar) {
+    init(dataSource: WorkoutDataSource, profileStore: ProfileStore, calendar: Calendar = HomeView.defaultCalendar) {
         self.calendar = calendar
+        self.profileStore = profileStore
         _store = StateObject(wrappedValue: WorkoutSessionStore(dataSource: dataSource, calendar: calendar))
         _historyStore = StateObject(wrappedValue: WorkoutHistoryStore(dataSource: dataSource, calendar: calendar))
         _programStore = StateObject(wrappedValue: ProgramStore(dataSource: dataSource))
         _continuity = StateObject(wrappedValue: ContinuityStore(dataSource: dataSource, calendar: calendar))
-        _profileStore = StateObject(wrappedValue: ProfileStore(dataSource: dataSource, calendar: calendar))
     }
 
     var body: some View {
@@ -89,6 +90,7 @@ struct WorkoutView: View {
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         NavigationLink("分析", value: AnalysisRoute())
+                            .accessibilityIdentifier("workout.analysis")
                     }
                 }
                 .navigationDestination(for: UUID.self) { exerciseId in

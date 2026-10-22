@@ -20,6 +20,8 @@ final class LifeTrackerUITestsLaunchTests: XCTestCase {
     @MainActor
     func testLaunch() throws {
         let app = XCUIApplication()
+        // 本番につながない起動 (計画 §2-7 P10)
+        app.launchArguments = ["-mock-day", "-mock-workout", "-mock-auth"]
         app.launch()
 
         // Insert steps here to perform after app launch but before taking a screenshot,

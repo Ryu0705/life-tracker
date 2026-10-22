@@ -1536,6 +1536,7 @@ final class FailFirstCheckInSource: DayDataSource, ScheduleDataSource, @unchecke
     func fetchCatalog() async throws -> ScheduleCatalog { try await inner.fetchCatalog() }
     func apply(_ operation: ScheduleOperation) async throws { try await inner.apply(operation) }
     func createCategory(name: String) async throws -> LifeTracker.Category { try await inner.createCategory(name: name) }
+    func ensureUserDefaults() async throws { try await inner.ensureUserDefaults() }
     func applyCheckIn(_ operation: CheckInOperation) async throws {
         let first = lock.withLock { () -> Bool in
             count += 1

@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		203A51633FA334C64EA1610A /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FA8E5A922E7CEAE2E67E0FB9 /* Foundation.framework */; };
 		8F9D7561D13ABE73ADC84AF2 /* RestTimerWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3F869E7AED09FC565C74F2E1 /* RestTimerWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		C0A1E5D02FA9000100000003 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = C0A1E5D02FA9000100000002 /* GoogleSignIn */; };
 		D86D16D82F9E41AF0047F0EF /* HolidayJp in Frameworks */ = {isa = PBXBuildFile; productRef = D86D16D72F9E41AF0047F0EF /* HolidayJp */; };
 		D86D16DB2F9E42F20047F0EF /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = D86D16DA2F9E42F20047F0EF /* Supabase */; };
 /* End PBXBuildFile section */
@@ -103,6 +104,7 @@
 			files = (
 				D86D16DB2F9E42F20047F0EF /* Supabase in Frameworks */,
 				D86D16D82F9E41AF0047F0EF /* HolidayJp in Frameworks */,
+				C0A1E5D02FA9000100000003 /* GoogleSignIn in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -189,6 +191,7 @@
 			packageProductDependencies = (
 				D86D16D72F9E41AF0047F0EF /* HolidayJp */,
 				D86D16DA2F9E42F20047F0EF /* Supabase */,
+				C0A1E5D02FA9000100000002 /* GoogleSignIn */,
 			);
 			productName = LifeTracker;
 			productReference = D86D16A72F9E3F2F0047F0EF /* LifeTracker.app */;
@@ -293,6 +296,7 @@
 			packageReferences = (
 				D86D16D62F9E41AF0047F0EF /* XCRemoteSwiftPackageReference "holiday_jp-swift" */,
 				D86D16D92F9E42F20047F0EF /* XCRemoteSwiftPackageReference "supabase-swift" */,
+				C0A1E5D02FA9000100000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D86D16A82F9E3F2F0047F0EF /* Products */;
@@ -762,6 +766,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		C0A1E5D02FA9000100000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 10.0.0;
+			};
+		};
 		D86D16D62F9E41AF0047F0EF /* XCRemoteSwiftPackageReference "holiday_jp-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/holiday-jp/holiday_jp-swift";
@@ -781,6 +793,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		C0A1E5D02FA9000100000002 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0A1E5D02FA9000100000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
 		D86D16D72F9E41AF0047F0EF /* HolidayJp */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = D86D16D62F9E41AF0047F0EF /* XCRemoteSwiftPackageReference "holiday_jp-swift" */;

@@ -5,18 +5,26 @@ final class SupabaseDayDataSource: DayDataSource {
     private let client: SupabaseClient
     private let calendar: Calendar
     private let holidayChecker: (Date) -> Bool
+    /// 42501・PGRST3xx を DataAccessError に変える境界 (計画 §2-5・P9。トレーニングの data source と共有)
+    private let access: DataAccessGuard
 
     init(
         client: SupabaseClient,
         calendar: Calendar,
-        holidayChecker: @escaping (Date) -> Bool
+        holidayChecker: @escaping (Date) -> Bool,
+        access: DataAccessGuard
     ) {
         self.client = client
         self.calendar = calendar
         self.holidayChecker = holidayChecker
+        self.access = access
     }
 
     func loadDayContext(date: Date) async throws -> DayBuilderContext {
+        try await access.run { try await fetchDayContext(date: date) }
+    }
+
+    private func fetchDayContext(date: Date) async throws -> DayBuilderContext {
         let dayStart = calendar.startOfDay(for: date)
         guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart),
               let previousDayStart = calendar.date(byAdding: .day, value: -1, to: dayStart) else {
@@ -99,8 +107,8 @@ final class SupabaseDayDataSource: DayDataSource {
         )
 
         // 回数のタップ (0012。時刻つきで目標 2 以上の回の「1/3」) は別の問い合わせ。失敗 (0012 の無い DB など) は空として扱い、
-        // 睡眠タブ・今日のカードを落とさない (R2)
-        let taps = await fetchTaps(actualIds: actual.map(\.id))
+        // 睡眠タブ・今日のカードを落とさない (R2)。権限・トークンで断られたときだけは投げる (計画 §2-5)
+        let taps = try await fetchTaps(actualIds: actual.map(\.id))
 
         let cal = calendar
         return TemplateVersions.context(
@@ -132,8 +140,8 @@ private struct WorkoutSetTime: Decodable {
 }
 
 extension SupabaseDayDataSource {
-    /// 実績のタップ (actual_task_tap)。読めなければ空 (R2)
-    func fetchTaps(actualIds: [UUID]) async -> [ActualTaskTap] {
+    /// 実績のタップ (actual_task_tap)。読めなければ空 (R2)。ただし権限・トークンで断られた (42501・PGRST3xx) ときは投げる
+    func fetchTaps(actualIds: [UUID]) async throws -> [ActualTaskTap] {
         guard !actualIds.isEmpty else { return [] }
         do {
             return try await client.from("actual_task_tap")
@@ -142,8 +150,15 @@ extension SupabaseDayDataSource {
                 .execute()
                 .value
         } catch {
-            return []
+            return try Self.tapsAfterFailure(access.translate(error))
         }
+    }
+
+    /// タップが読めなかったときの扱い (純粋な関数・計画 §2-5)。境界で変えた DataAccessError (42501・PGRST3xx) は投げる
+    /// (権限・セッションの問題を「タップ無し」に見せない)。ほか (0012 の無い DB・通信など) は空 (R2)
+    static func tapsAfterFailure(_ error: Error) throws -> [ActualTaskTap] {
+        if error is DataAccessError { throw error }
+        return []
     }
 }
 
@@ -151,27 +166,30 @@ extension SupabaseDayDataSource {
 extension SupabaseDayDataSource: TodoDataSource {
     func loadTodos(date: Date) async throws -> TodoFetch {
         let call = ScheduleRPC.todoFetch(date: date, calendar: calendar)
-        return try await client.rpc(call.function, params: call.params).execute().value
+        return try await access.run { try await client.rpc(call.function, params: call.params).execute().value }
     }
 }
 
 extension SupabaseDayDataSource: ScheduleDataSource {
     func fetchCatalog() async throws -> ScheduleCatalog {
-        async let categories: [Category] = client.from("category").select().execute().value
-        async let patterns: [Pattern] = client.from("pattern").select().execute().value
-        async let versions: [TaskTemplateVersion] = client.from("task_template_version").select().execute().value
-        async let memberships: [PatternVersionMembership] = client.from("pattern_version_membership").select().execute().value
-        return try await ScheduleCatalog(categories: categories, patterns: patterns, versions: versions,
-                                         versionMemberships: memberships)
+        try await access.run {
+            async let categories: [Category] = client.from("category").select().execute().value
+            async let patterns: [Pattern] = client.from("pattern").select().execute().value
+            async let versions: [TaskTemplateVersion] = client.from("task_template_version").select().execute().value
+            async let memberships: [PatternVersionMembership] = client.from("pattern_version_membership").select().execute().value
+            return try await ScheduleCatalog(categories: categories, patterns: patterns, versions: versions,
+                                             versionMemberships: memberships)
+        }
     }
 
-    /// 1 操作 = 1 RPC (1 トランザクション。D ≥ 今日の検査も関数の中。migration 0006)。規則のエラーはメモリ上の実装と同じ型にする (R10)
+    /// 1 操作 = 1 RPC (1 トランザクション。D ≥ 今日の検査も関数の中。migration 0006)。規則のエラーはメモリ上の実装と同じ型にする (R10)。
+    /// 42501・PGRST3xx は先に DataAccessError にする (規則の分け方は変えない)
     func apply(_ operation: ScheduleOperation) async throws {
         let call = ScheduleRPC.call(for: operation, calendar: calendar)
         do {
             try await client.rpc(call.function, params: call.params).execute()
-        } catch let error as PostgrestError {
-            throw RuleErrorMapping.schedule(error) ?? error
+        } catch {
+            throw Self.classify(error, access: access) { RuleErrorMapping.schedule($0) }
         }
     }
 
@@ -180,18 +198,35 @@ extension SupabaseDayDataSource: ScheduleDataSource {
         let call = ScheduleRPC.call(for: operation, calendar: calendar)
         do {
             try await client.rpc(call.function, params: call.params).execute()
-        } catch let error as PostgrestError {
-            throw RuleErrorMapping.checkIn(error, operation: operation, now: Date(), calendar: calendar) ?? error
+        } catch {
+            throw Self.classify(error, access: access) {
+                RuleErrorMapping.checkIn($0, operation: operation, now: Date(), calendar: calendar)
+            }
         }
     }
 
+    /// RPC の失敗の分け方 (純粋な関数・計画 §2-5)。先に境界 (`access.translate`) を通し、42501・PGRST3xx は DataAccessError のまま返す
+    /// (規則の分け方 `rule` には渡さない)。ほかの PostgrestError は `rule` で規則のエラーにし、対応が無ければ元のまま。そのほかはそのまま
+    static func classify(_ error: Error, access: DataAccessGuard, rule: (PostgrestError) -> Error?) -> Error {
+        let translated = access.translate(error)
+        guard let postgrestError = translated as? PostgrestError else { return translated }
+        return rule(postgrestError) ?? postgrestError
+    }
+
     func createCategory(name: String) async throws -> Category {
-        try await client.from("category")
-            .insert(NewCategory(name: name))
-            .select()
-            .single()
-            .execute()
-            .value
+        try await access.run {
+            try await client.from("category")
+                .insert(NewCategory(name: name))
+                .select()
+                .single()
+                .execute()
+                .value
+        }
+    }
+
+    /// 引数なしの RPC (本人の行が既にあれば何もしない。migration 0014)
+    func ensureUserDefaults() async throws {
+        try await access.run { try await client.rpc("ensure_user_defaults").execute() }
     }
 }
 
@@ -203,36 +238,44 @@ private struct NewCategory: Encodable {
 /// 重なりは DB の EXCLUDE (23P01)、時刻・24 時間・kind は CHECK (23514) が止める (文言は SleepRules.message)
 extension SupabaseDayDataSource: SleepDataSource {
     func fetchSleepRecords(from: Date, to: Date) async throws -> [SleepRecord] {
-        try await client.from("sleep_record")
-            .select()
-            .lt("start_at", value: supabaseTimestampFormatter.string(from: to))
-            .gt("end_at", value: supabaseTimestampFormatter.string(from: from))
-            .order("start_at")
-            .execute()
-            .value
+        try await access.run {
+            try await client.from("sleep_record")
+                .select()
+                .lt("start_at", value: supabaseTimestampFormatter.string(from: to))
+                .gt("end_at", value: supabaseTimestampFormatter.string(from: from))
+                .order("start_at")
+                .execute()
+                .value
+        }
     }
 
     func insertSleepRecord(start: Date, end: Date, kind: SleepKind) async throws -> SleepRecord {
-        try await client.from("sleep_record")
-            .insert(SleepRecordWrite(startAt: start, endAt: end, kind: kind))
-            .select()
-            .single()
-            .execute()
-            .value
+        try await access.run {
+            try await client.from("sleep_record")
+                .insert(SleepRecordWrite(startAt: start, endAt: end, kind: kind))
+                .select()
+                .single()
+                .execute()
+                .value
+        }
     }
 
     func updateSleepRecord(id: UUID, start: Date, end: Date, kind: SleepKind) async throws {
-        try await client.from("sleep_record")
-            .update(SleepRecordWrite(startAt: start, endAt: end, kind: kind))
-            .eq("id", value: id.uuidString)
-            .execute()
+        try await access.run {
+            try await client.from("sleep_record")
+                .update(SleepRecordWrite(startAt: start, endAt: end, kind: kind))
+                .eq("id", value: id.uuidString)
+                .execute()
+        }
     }
 
     func deleteSleepRecord(id: UUID) async throws {
-        try await client.from("sleep_record")
-            .delete()
-            .eq("id", value: id.uuidString)
-            .execute()
+        try await access.run {
+            try await client.from("sleep_record")
+                .delete()
+                .eq("id", value: id.uuidString)
+                .execute()
+        }
     }
 }
 

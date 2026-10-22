@@ -147,6 +147,9 @@ final class InMemoryScheduleDataSource: DayDataSource, ScheduleDataSource, TodoD
         }
     }
 
+    /// メモリ上は 1 人で、初期データは makeFixture が入れるので何もしない
+    func ensureUserDefaults() async throws {}
+
     // MARK: - 回の規則 (0012 の内部関数 todo_target・todo_closed_on の原本)
 
     /// 回の日・予定の時刻 (時刻つきの回だけ)・目標の回数。単発 → その実体、系列 → O(d) があればその中身、無ければ d に効く世代

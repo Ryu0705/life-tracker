@@ -3,7 +3,7 @@ import Foundation
 /// トレーニング記録の読み書き。workout は独立アグリゲートのため DayDataSource とは別 protocol
 /// (Round 1 で保留された「write 系を DayDataSource 拡張か別 protocol か」= 別 protocol で確定、training-domain-design.md 判断 A)。
 protocol WorkoutDataSource {
-    /// is_archived = false の種目を sort_order 順で返す
+    /// is_archived = false の種目を sort_order 順で返す (アーカイブ・並び順は人ごと。Supabase は view exercise_for_user)
     func fetchExercises() async throws -> [Exercise]
     /// is_archived = false のルーティンを sort_order 順で返す
     func fetchRoutines() async throws -> [Routine]
@@ -55,16 +55,16 @@ protocol WorkoutDataSource {
     func fetchTrainingDays() async throws -> Set<Date>
     /// 週の目標回数の履歴 (effective_from 順)
     func fetchWeeklyGoals() async throws -> [WeeklyGoal]
-    /// 同じ週頭の目標があれば上書きする (effective_from の UNIQUE で upsert)
+    /// 同じ週頭の目標があれば上書きする (人ごとの UNIQUE (user_id, effective_from) で upsert)
     func saveWeeklyGoal(_ goal: WeeklyGoal) async throws
 
-    /// プロフィール (1 行)。未設定なら nil
+    /// プロフィール (人ごとに 1 行)。未設定なら nil
     func fetchProfile() async throws -> UserProfile?
-    /// 1 行を上書きする (id = 1 の upsert)
+    /// その人の 1 行を上書きする (主キー user_id の upsert)
     func saveProfile(_ profile: UserProfile) async throws
     /// 体重の全期間 (recorded_on 順)。実装側でページングする
     func fetchBodyWeights() async throws -> [BodyWeightRecord]
-    /// 同じ日があれば上書きする (recorded_on の upsert)
+    /// 同じ日があれば上書きする (人と日ごと (user_id, recorded_on) の upsert)
     func saveBodyWeight(_ record: BodyWeightRecord) async throws
 }
 

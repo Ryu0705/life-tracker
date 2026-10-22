@@ -12,3 +12,10 @@ SUPABASE_ANON_KEY = your-anon-key-here
 // Info.plist 自動生成 (GENERATE_INFOPLIST_FILE = YES) に流し込む
 INFOPLIST_KEY_SUPABASE_URL = $(SUPABASE_URL)
 INFOPLIST_KEY_SUPABASE_ANON_KEY = $(SUPABASE_ANON_KEY)
+
+// Google でサインイン (GoogleSignIn-iOS)。Google Cloud で作った iOS 用の OAuth クライアントの値を入れる
+// - GOOGLE_IOS_CLIENT_ID: iOS 用のクライアント ID (xxxx.apps.googleusercontent.com)。Info.plist の GIDClientID に入る
+// - GOOGLE_REVERSED_CLIENT_ID: その逆順 (com.googleusercontent.apps.xxxx)。Info.plist の URL スキームに入る
+// どちらかが unset のままなら、アプリは「Google の設定がまだです」と出し、Google の画面を開かない
+GOOGLE_IOS_CLIENT_ID = unset
+GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.unset

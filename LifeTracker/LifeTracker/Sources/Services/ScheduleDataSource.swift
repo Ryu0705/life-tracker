@@ -9,6 +9,9 @@ protocol ScheduleDataSource {
     func apply(_ operation: ScheduleOperation) async throws
     func applyCheckIn(_ operation: CheckInOperation) async throws
     func createCategory(name: String) async throws -> Category
+    /// サインインの直後に、その人の初期データ (予定の種類など) が無ければ入れる (0014 の RPC `ensure_user_defaults`。設計 §3・計画 §2-4)。
+    /// メモリ上の実装は何もしない
+    func ensureUserDefaults() async throws
 }
 
 /// 「やること」(時刻なしの回) の読み取り (0012 todo_fetch。1 往復)。予定タブ (ScheduleStore) だけが loadDayContext と並列で呼ぶ
