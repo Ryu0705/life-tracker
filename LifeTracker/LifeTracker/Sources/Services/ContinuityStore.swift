@@ -4,7 +4,8 @@ import WidgetKit
 
 /// 継続の元データ (トレーニングした日の全期間と、週の目標回数の履歴)。
 /// 連続週数・リングは保存せず、表示のたびに Continuity で計算する (docs/continuity-design.md)。
-/// 今日の分は今日の store のセットから合成する (記録・削除のたびに DB を読み直さない)
+/// 開いている日 (今日と、開いていれば前の日) の分は記録の store のセットから合成する (記録・削除のたびに DB を読み直さない)。
+/// 日はセットの day (トレーニングの日。前の日に 0:30 に記録すると前の日の週の回数に入る)
 @MainActor
 final class ContinuityStore: ObservableObject {
     @Published private(set) var trainingDays: Set<Date> = []
@@ -34,18 +35,21 @@ final class ContinuityStore: ObservableObject {
         }
     }
 
-    /// 今日の store のセットの有無で今日の分を差し替えた、トレーニングした日
-    func days(today: Date, recordedToday: Bool) -> Set<Date> {
-        let key = calendar.startOfDay(for: today)
-        return trainingDays.subtracting([key]).union(recordedToday ? [key] : [])
+    /// 開いている日の分を記録の store に差し替えた、トレーニングした日。
+    /// live = 開いている日 → その日に記録の store のセットがあるか (DB の分から開いている日を除き、記録がある日を足す)
+    func days(live: [Date: Bool]) -> Set<Date> {
+        let open = Set(live.keys.map { calendar.startOfDay(for: $0) })
+        let recorded = live.filter(\.value).keys.map { calendar.startOfDay(for: $0) }
+        return trainingDays.subtracting(open).union(recorded)
     }
 
-    func status(today: Date, recordedToday: Bool) -> ContinuityStatus? {
-        Continuity.status(trainingDays: days(today: today, recordedToday: recordedToday), goals: goals, today: today, calendar: calendar)
+    func status(today: Date, live: [Date: Bool]) -> ContinuityStatus? {
+        Continuity.status(trainingDays: days(live: live), goals: goals, today: today, calendar: calendar)
     }
 
-    var currentTarget: Int? {
-        Continuity.target(forWeek: Continuity.weekStart(containing: Date(), calendar: calendar), goals: goals)
+    /// 今週の目標 (today は記録の store の今日。-mock-now でずらした時計でも同じ週を見る)
+    func currentTarget(today: Date) -> Int? {
+        Continuity.target(forWeek: Continuity.weekStart(containing: today, calendar: calendar), goals: goals)
     }
 
     /// 今週から有効な目標にする (同じ週に変えたら上書き)。過去の週は当時の目標のまま
@@ -63,9 +67,9 @@ final class ContinuityStore: ObservableObject {
     }
 
     /// ウィジェットへ渡す。中身が変わったときだけ書いてタイムラインを作り直させる
-    func share(today: Date, recordedToday: Bool) {
+    func share(live: [Date: Bool]) {
         guard isLoaded else { return }
-        let snapshot = ContinuityShare.Snapshot(trainingDays: days(today: today, recordedToday: recordedToday).sorted(), goals: goals)
+        let snapshot = ContinuityShare.Snapshot(trainingDays: days(live: live).sorted(), goals: goals)
         guard snapshot != lastShared else { return }
         lastShared = snapshot
         ContinuityShare.save(snapshot)

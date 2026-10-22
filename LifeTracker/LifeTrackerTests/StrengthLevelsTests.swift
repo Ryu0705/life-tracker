@@ -21,10 +21,12 @@ private func exercise(_ name: String, _ muscle: Exercise.MuscleGroup = .chest, _
     Exercise(id: UUID(), name: name, muscleGroup: muscle, equipment: equipment, metricKind: kind, note: nil, isArchived: false, sortOrder: nil)
 }
 
+/// 日 (トレーニングの日) を指定しなければ date の JST の日
 private func set(_ exercise: Exercise, weight: Double? = nil, reps: Int? = nil, sec: Int? = nil, distance: Double? = nil,
-                 warmup: Bool = false, at date: Date) -> WorkoutSet {
+                 warmup: Bool = false, at date: Date, day trainingDay: Date? = nil) -> WorkoutSet {
     WorkoutSet(id: UUID(), sessionId: UUID(), exerciseId: exercise.id, entryId: UUID(), setIndex: 1,
-               weight: weight, reps: reps, durationSec: sec, distanceM: distance, rpe: nil, isWarmup: warmup, completedAt: date)
+               weight: weight, reps: reps, durationSec: sec, distanceM: distance, rpe: nil, isWarmup: warmup, completedAt: date,
+               day: trainingDay ?? trainingDayJST(date))
 }
 
 private func weight(_ kg: Double, on ymd: String) -> BodyWeightRecord {
@@ -370,6 +372,25 @@ struct StrengthLevelsTests {
         let outside = summarize([set(bench, weight: 64, reps: 1, at: at("2026-09-10T23:59:59"))], [bench])
         #expect(inside[.chest]?.state == .level(2))
         #expect(outside[.chest]?.state == .noRecord)
+    }
+
+    @Test("期間と体重の日はセットの day: 期間の最後の日 (10/10) に翌 0:30 に記録したセットは入り、その日の体重を当てる。最初の日の前の日の分は入らない (付録 B-5)")
+    func periodUsesTrainingDay() throws {
+        let bench = exercise("ベンチプレス")
+        let late = set(bench, weight: 64, reps: 1, at: at("2026-10-11T00:30:00"), day: day("2026-10-10"))
+        let chest = try #require(summarize([late], [bench], weights: [weight(70, on: "2026-09-01"), weight(90, on: "2026-10-11")])[.chest])
+        let best = try #require(chest.exercises.first)
+        guard case .level(let v, let used, let bw) = best.status else { Issue.record("級なし"); return }
+        #expect(used.id == late.id && bw == 70 && v == 2)
+        let early = set(bench, weight: 64, reps: 1, at: at("2026-09-11T00:30:00"), day: day("2026-09-10"))
+        #expect(summarize([early], [bench])[.chest]?.state == .noRecord)
+
+        let run = exercise("ランニング（屋外）", .cardio, .durationDistance)
+        let totals = StrengthLevels.cardioTotals(sets: [
+            set(run, sec: 1800, distance: 5000, at: at("2026-10-11T00:30:00"), day: day("2026-10-10")),
+            set(run, sec: 600, distance: 1000, at: at("2026-09-11T00:30:00"), day: day("2026-09-10")),
+        ], exercisesById: [run.id: run], interval: period)
+        #expect(totals == CardioTotals(count: 1, durationSec: 1800, distanceM: 5000))
     }
 
     @Test("期間を含む週頭 (月曜) を列挙する")

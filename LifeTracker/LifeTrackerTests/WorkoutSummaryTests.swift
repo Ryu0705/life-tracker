@@ -21,10 +21,11 @@ private func exercise(_ name: String, _ kind: MetricKind = .weightReps, _ muscle
     Exercise(id: UUID(), name: name, muscleGroup: muscle, equipment: nil, metricKind: kind, note: nil, isArchived: false, sortOrder: nil)
 }
 
+/// 日 (トレーニングの日) を指定しなければ at の JST の日
 private func set(_ exercise: Exercise, _ index: Int = 1, weight: Double? = nil, reps: Int? = nil, sec: Int? = nil,
-                 warmup: Bool = false, at: Date) -> WorkoutSet {
+                 warmup: Bool = false, at: Date, day: Date? = nil) -> WorkoutSet {
     WorkoutSet(id: UUID(), sessionId: UUID(), exerciseId: exercise.id, entryId: UUID(), setIndex: index, weight: weight, reps: reps,
-               durationSec: sec, distanceM: nil, rpe: nil, isWarmup: warmup, completedAt: at)
+               durationSec: sec, distanceM: nil, rpe: nil, isWarmup: warmup, completedAt: at, day: day ?? trainingDayJST(at))
 }
 
 @Suite("WorkoutSummary — 日の合計")
@@ -82,15 +83,31 @@ struct WorkoutSummaryDayTests {
         #expect(ProgressMetric.volume.format(1440) == "1,440kg")
     }
 
-    @Test("今日の分は今日の store のセットが勝つ")
-    func mergeToday() {
-        let today = jstDate("2026-09-30T12:00:00")
+    @Test("開いている日の分は記録の store のセットが勝つ。セットの無い開いている日は履歴の分も消える")
+    func mergeLive() {
+        let today = jstDate("2026-09-30T00:00:00")
         let yesterday = set(bench, weight: 60, reps: 10, at: jstDate("2026-09-29T07:00:00"))
         let staleToday = set(bench, weight: 50, reps: 10, at: jstDate("2026-09-30T07:00:00"))
         let fresh = set(bench, weight: 70, reps: 5, at: jstDate("2026-09-30T07:05:00"))
-        let merged = WorkoutSummary.mergeToday(historySets: [yesterday, staleToday], todaySets: [fresh], today: today, calendar: jst)
+        let merged = WorkoutSummary.mergeLive(history: [yesterday, staleToday], live: [today: [fresh]])
         #expect(merged.map(\.id) == [yesterday.id, fresh.id])
-        #expect(WorkoutSummary.mergeToday(historySets: [yesterday, staleToday], todaySets: [], today: today, calendar: jst).map(\.id) == [yesterday.id])
+        #expect(WorkoutSummary.mergeLive(history: [yesterday, staleToday], live: [today: []]).map(\.id) == [yesterday.id])
+        // 前の日も開いていれば、前の日の分も store に差し替える (開いている日の古い順に足す)
+        let yesterdayKey = jstDate("2026-09-29T00:00:00")
+        let late = set(bench, weight: 80, reps: 3, at: jstDate("2026-09-30T00:30:00"), day: yesterdayKey)
+        let both = WorkoutSummary.mergeLive(history: [yesterday, staleToday], live: [today: [fresh], yesterdayKey: [yesterday, late]])
+        #expect(both.map(\.id) == [yesterday.id, late.id, fresh.id])
+    }
+
+    @Test("開いている日 → その日の store のセット")
+    func liveSets() {
+        let today = jstDate("2026-09-30T00:00:00")
+        let yesterday = jstDate("2026-09-29T00:00:00")
+        let fresh = set(bench, weight: 70, reps: 5, at: jstDate("2026-09-30T07:05:00"))
+        let live = WorkoutSummary.liveSets(openDays: [today, yesterday]) { $0 == today ? [fresh] : [] }
+        #expect(live.keys.sorted() == [yesterday, today])
+        #expect(live[today]?.map(\.id) == [fresh.id])
+        #expect(live[yesterday]?.isEmpty == true)
     }
 }
 
@@ -204,6 +221,49 @@ struct WorkoutSummaryWeekTests {
     }
 }
 
+@Suite("WorkoutSummary — トレーニングの日 (月曜 0:30 に日曜へ記録したセットは日曜。付録 B-5)")
+@MainActor
+struct WorkoutSummaryTrainingDayTests {
+    let bench = exercise("ベンチプレス")
+    /// 2026-10-04 は日曜、10-05 は月曜
+    let sunday = jstDate("2026-10-04T00:00:00")
+    let monday = jstDate("2026-10-05T00:00:00")
+
+    /// 週の帯で日曜を選んで、月曜 0:30 に ✓ したセット (day = 日曜・completed_at = 月曜 0:30)
+    func lateSundaySet() -> WorkoutSet {
+        set(bench, weight: 60, reps: 10, at: jstDate("2026-10-05T00:30:00"), day: sunday)
+    }
+
+    @Test("記録がある日・週の合計・曜日×部位は日曜に入り、月曜の週には入らない")
+    func recordedDaysAndWeekTotals() {
+        let late = lateSundaySet()
+        let byId = [bench.id: bench]
+        #expect(WorkoutSummary.recordedDays([late], calendar: jst) == [sunday])
+        let sundayWeek = WorkoutSummary.weekTotals(sets: [late], exercisesById: byId, week: sunday, calendar: jst)
+        #expect(sundayWeek.volume == 600)
+        #expect(sundayWeek.totalWorkingSets == 1)
+        #expect(sundayWeek.byDayMuscle == [.init(day: sunday, muscle: .chest, volume: 600)])
+        #expect(WorkoutSummary.weekTotals(sets: [late], exercisesById: byId, week: monday, calendar: jst).volume == nil)
+        // 「前週の同じ曜日まで」の日曜までにも入る
+        #expect(WorkoutSummary.weekTotals(sets: [late], exercisesById: byId, week: sunday, through: sunday, calendar: jst).volume == 600)
+        // 時刻の幅は実際の時刻のまま (日の合計バー)
+        let evening = set(bench, weight: 60, reps: 10, at: jstDate("2026-10-04T23:30:00"))
+        #expect(WorkoutSummary.timeRangeText(WorkoutSummary.dayTotals([evening, late]), calendar: jst) == "23:30–0:30 · 60分")
+    }
+
+    @Test("mergeLive は日曜 (開いている前の日) の分を store のセットに差し替える。前回 (latestDaySets) も日曜の分")
+    func mergeAndLatest() {
+        let late = lateSundaySet()
+        let stale = set(bench, weight: 50, reps: 10, at: jstDate("2026-10-04T20:00:00"))
+        let merged = WorkoutSummary.mergeLive(history: [stale], live: [sunday: [stale, late], monday: []])
+        #expect(merged.map(\.id) == [stale.id, late.id])
+        let latest = WorkoutSummary.latestDaySets(merged, before: jstDate("2026-10-05T12:00:00"), calendar: jst)
+        #expect(latest[bench.id]?.map(\.id) == [stale.id, late.id])
+        // 日曜を表示しているときの前回は日曜より前 (日曜の分は含めない)
+        #expect(WorkoutSummary.latestDaySets(merged, before: sunday, calendar: jst)[bench.id] == nil)
+    }
+}
+
 @Suite("WorkoutSummary — プログラムの前回表示")
 @MainActor
 struct WorkoutSummaryLatestDayTests {
@@ -220,9 +280,12 @@ struct WorkoutSummaryLatestDayTests {
             set(bench, 1, weight: 70, reps: 5, sec: 0, at: jstDate("2026-09-30T07:00:00")),
             set(squat, 1, weight: 80, reps: 5, sec: 0, at: jstDate("2026-09-30T07:10:00")),
         ]
-        let latest = WorkoutSummary.latestDaySets(sets, today: today, calendar: jst)
+        let latest = WorkoutSummary.latestDaySets(sets, before: today, calendar: jst)
         #expect(latest[bench.id]?.map(\.weight) == [65, 65])
         #expect(latest[squat.id] == nil)
+        // 前の日を表示しているときは、その日より前の最新の日
+        let beforeMonday = WorkoutSummary.latestDaySets(sets, before: jstDate("2026-09-28T00:00:00"), calendar: jst)
+        #expect(beforeMonday[bench.id]?.map(\.weight) == [60])
     }
 }
 
@@ -242,6 +305,24 @@ struct WorkoutSummaryHeadlineTests {
         let warmup = [set(bench, 1, weight: 40, reps: 10, warmup: true, at: t0)]
         #expect(WorkoutSummary.cardHeadline(kind: .weightReps, todaySets: warmup, previousSets: previous) == "前回 e1RM 76kg")
         #expect(WorkoutSummary.cardHeadline(kind: .weightReps, todaySets: today, previousSets: []) == "今日 1,120kg · e1RM 82.3kg")
+    }
+
+    @Test("前の日を開いているときは「今日」を「この日」に (見出し・プログラムの上書きの題)。今日なら「今日」")
+    func dayWord() {
+        let today = jstDate("2026-09-30T00:00:00")
+        let yesterday = jstDate("2026-09-29T00:00:00")
+        #expect(WorkoutSummary.dayWord(activeDay: today, today: today) == "今日")
+        #expect(WorkoutSummary.dayWord(activeDay: yesterday, today: today) == "この日")
+        let sets = [set(bench, 1, weight: 60, reps: 10, at: t0), set(bench, 2, weight: 65, reps: 8, at: t0)]
+        let previous = [set(bench, 1, weight: 60, reps: 8, at: t0)]
+        #expect(WorkoutSummary.cardHeadline(kind: .weightReps, todaySets: sets, previousSets: previous, dayWord: "この日")
+                == "この日 1,120kg · e1RM 82.3kg（前回 76kg）")
+        // 前回だけのときは日の呼び方を出さない
+        #expect(WorkoutSummary.cardHeadline(kind: .weightReps, todaySets: [], previousSets: previous, dayWord: "この日") == "前回 e1RM 76kg")
+        let program = WorkoutProgram(routine: Routine(id: UUID(), name: "胸の日", note: nil, isArchived: false, sortOrder: 1),
+                                     exerciseIds: [bench.id])
+        #expect(ProgramDraft.overwrite(program, with: [bench.id], dayWord: "この日").title == "この日の種目で上書き")
+        #expect(ProgramDraft.overwrite(program, with: [bench.id]).title == "今日の種目で上書き")
     }
 
     @Test("回数のみ・時間: 推移の初期指標で出す")

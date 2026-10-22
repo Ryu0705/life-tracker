@@ -12,12 +12,18 @@ private func exercise(_ name: String, _ kind: MetricKind, id: UUID = UUID()) -> 
     Exercise(id: id, name: name, muscleGroup: .chest, equipment: nil, metricKind: kind, note: nil, isArchived: false, sortOrder: nil)
 }
 
-/// entry を指定しなければ (セッション, 種目) ごとに 1 つ (migration 0010 の backfill と同じ単位)
+/// entry を指定しなければ (セッション, 種目) ごとに 1 つ (migration 0010 の backfill と同じ単位)。
+/// 日を指定しなければ at の JST の日 (トレーニングの日)
 private func set(session: UUID, exercise: UUID, index: Int, weight: Double? = nil, reps: Int? = nil,
-                 warmup: Bool = false, at: Date = Date(), entry: UUID? = nil) -> WorkoutSet {
+                 warmup: Bool = false, at: Date = Date(), entry: UUID? = nil, day: Date? = nil) -> WorkoutSet {
     WorkoutSet(id: UUID(), sessionId: session, exerciseId: exercise, entryId: entry ?? backfillEntryId(session, exercise),
                setIndex: index, weight: weight, reps: reps,
-               durationSec: nil, distanceM: nil, rpe: nil, isWarmup: warmup, completedAt: at)
+               durationSec: nil, distanceM: nil, rpe: nil, isWarmup: warmup, completedAt: at, day: day ?? trainingDayJST(at))
+}
+
+/// テスト用: その時刻の JST の日 (0 時)。WorkoutSet・WorkoutSession の day の既定に使う (DB の date と同じ区切り)
+func trainingDayJST(_ date: Date) -> Date {
+    DateOnly.formatter.date(from: DateOnly.formatter.string(from: date))!
 }
 
 /// (セッション, 種目) から決まる entry id (2 つの UUID のバイトの XOR)
@@ -161,7 +167,8 @@ struct WorkoutLogicTests {
         #expect(WorkoutLogic.summary(of: set(session: session, exercise: bench, index: 1, weight: 62.5, reps: 8), kind: .weightReps) == "62.5×8")
         #expect(WorkoutLogic.summary(of: set(session: session, exercise: bench, index: 1, weight: 60, reps: 10), kind: .weightReps) == "60×10")
         let run = WorkoutSet(id: UUID(), sessionId: session, exerciseId: bench, entryId: UUID(), setIndex: 1, weight: nil, reps: nil,
-                             durationSec: 1230, distanceM: 3200, rpe: nil, isWarmup: false, completedAt: nil)
+                             durationSec: 1230, distanceM: 3200, rpe: nil, isWarmup: false, completedAt: nil,
+                             day: date("2026-09-30T00:00:00+09:00"))
         #expect(WorkoutLogic.summary(of: run, kind: .durationDistance) == "20:30・3.20km")
     }
 }
@@ -169,27 +176,32 @@ struct WorkoutLogicTests {
 @Suite("MockWorkoutDataSource")
 @MainActor
 struct MockWorkoutDataSourceTests {
-    @Test("進行中セッションは同時 1 件まで")
-    func singleInProgress() async throws {
+    @Test("セッションは 1 日 1 つ (UNIQUE (user_id, day))。前の日と今日は同時に開ける (0015 で進行中 1 件の一意をやめた)")
+    func oneSessionPerDay() async throws {
         let source = MockWorkoutDataSource()
-        _ = try await source.startSession(routineId: nil, startedAt: Date())
-        await #expect(throws: MockWorkoutDataSource.MockError.sessionAlreadyInProgress) {
-            _ = try await source.startSession(routineId: nil, startedAt: Date())
+        let previous = date("2026-09-29T00:00:00+09:00"), today = date("2026-09-30T00:00:00+09:00")
+        _ = try await source.startSession(day: previous, routineId: nil, startedAt: date("2026-09-29T23:00:00+09:00"))
+        _ = try await source.startSession(day: today, routineId: nil, startedAt: date("2026-09-30T00:20:00+09:00"))
+        await #expect(throws: MockWorkoutDataSource.MockError.duplicateDay) {
+            _ = try await source.startSession(day: today, routineId: nil, startedAt: date("2026-09-30T07:00:00+09:00"))
         }
+        #expect(try await source.fetchOpenSessions().map(\.day) == [previous, today])
+        #expect(try await source.fetchSessions(days: [today]).map(\.day) == [today])
     }
 
     @Test("セッション削除でセットも消える (ON DELETE CASCADE)")
     func deleteCascade() async throws {
         let source = MockWorkoutDataSource()
-        let s = try await source.startSession(routineId: nil, startedAt: Date())
+        let at = date("2026-09-30T07:00:00+09:00"), day = date("2026-09-30T00:00:00+09:00")
+        let s = try await source.startSession(day: day, routineId: nil, startedAt: at)
         let exerciseId = UUID()
         let entry = try await source.addEntry(sessionId: s.id, exerciseId: exerciseId, sortOrder: 1)
         _ = try await source.addSet(NewWorkoutSet(sessionId: s.id, exerciseId: exerciseId, entryId: entry.id, setIndex: 1, weight: 10, reps: 10,
-                                                  durationSec: nil, distanceM: nil, isWarmup: false, completedAt: Date()))
+                                                  durationSec: nil, distanceM: nil, isWarmup: false, completedAt: at, day: day))
         try await source.deleteSession(id: s.id)
         #expect(source.sets.isEmpty)
         #expect(source.entries.isEmpty)
-        #expect(try await source.fetchInProgressSession() == nil)
+        #expect(try await source.fetchOpenSessions().isEmpty)
     }
 }
 
@@ -203,12 +215,22 @@ struct WorkoutDecodingTests {
           "exercise_id":"2C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F","entry_id":"3C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F",
           "set_index":2,"weight":62.50,"reps":8,
           "duration_sec":null,"distance_m":null,"rpe":null,"is_warmup":false,
-          "completed_at":"2026-09-30T07:12:34.123456+09:00"}]
+          "completed_at":"2026-09-30T00:12:34.123456+09:00","day":"2026-09-29"}]
         """.data(using: .utf8)!
         let sets = try JSONDecoder.supabase.decode([WorkoutSet].self, from: json)
         #expect(sets.first?.weight == 62.5)
         #expect(sets.first?.setIndex == 2)
         #expect(sets.first?.entryId == UUID(uuidString: "3C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F"))
+        // day は DATE (JST 0 時)。0:12 に前の日へ記録したセットは前の日
+        #expect(sets.first?.day == date("2026-09-29T00:00:00+09:00"))
+
+        let sessionJSON = """
+        [{"id":"1C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F","actual_task_id":null,"routine_id":null,
+          "started_at":"2026-09-30T00:05:00+09:00","ended_at":null,"note":null,"day":"2026-09-29"}]
+        """.data(using: .utf8)!
+        let sessions = try JSONDecoder.supabase.decode([WorkoutSession].self, from: sessionJSON)
+        #expect(sessions.first?.day == date("2026-09-29T00:00:00+09:00"))
+        #expect(sessions.first?.isInProgress == true)
 
         let entryJSON = """
         [{"id":"3C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F","session_id":"1C1C4C8E-8A0B-4B0E-9D6B-0B7A1C2D3E4F",
@@ -261,8 +283,23 @@ struct WorkoutProgressTests {
         let sets = [set(session: UUID(), exercise: bench, index: 1, weight: 55, reps: 10, at: date("2026-09-20T07:00:00+09:00")),
                     set(session: UUID(), exercise: bench, index: 1, weight: 60, reps: 10, at: date("2026-09-28T07:00:00+09:00")),
                     set(session: session, exercise: bench, index: 1, weight: 70, reps: 3, at: date("2026-09-30T07:00:00+09:00"))]
-        let previous = WorkoutProgress.previousDay(sets, today: date("2026-09-30T12:00:00+09:00"), calendar: jst)
+        let previous = WorkoutProgress.previousDay(sets, before: date("2026-09-30T12:00:00+09:00"), calendar: jst)
         #expect(previous?.sets.map(\.weight) == [60])
+    }
+
+    @Test("日のまとめと前回はセットの day (月曜 0:30 に日曜へ記録したセットは日曜。日の中は記録順)")
+    func dailyUsesTrainingDay() {
+        let sunday = date("2026-10-04T00:00:00+09:00")
+        let monday = date("2026-10-05T00:00:00+09:00")
+        let evening = set(session: session, exercise: bench, index: 1, weight: 60, reps: 10, at: date("2026-10-04T23:30:00+09:00"))
+        let late = set(session: session, exercise: bench, index: 2, weight: 65, reps: 8, at: date("2026-10-05T00:30:00+09:00"), day: sunday)
+        let mondaySet = set(session: UUID(), exercise: bench, index: 1, weight: 70, reps: 5, at: date("2026-10-05T19:00:00+09:00"))
+        let daily = WorkoutProgress.daily([mondaySet, late, evening], calendar: jst)
+        #expect(daily.map(\.day) == [monday, sunday])
+        #expect(daily.last?.sets.map(\.id) == [evening.id, late.id])
+        // 月曜を記録する日の前回は日曜 (0:30 のセットも含めて 2 セット)。日曜の前回は無い
+        #expect(WorkoutProgress.previousDay([mondaySet, late, evening], before: monday, calendar: jst)?.sets.map(\.id) == [evening.id, late.id])
+        #expect(WorkoutProgress.previousDay([mondaySet, late, evening], before: sunday, calendar: jst) == nil)
     }
 
     @Test("指標: 最高重量 / 推定1RM (Epley) / ボリュームはウォームアップを除外")
@@ -313,7 +350,7 @@ struct WorkoutSessionStoreTests {
         #expect(source.sets.map(\.setIndex).sorted() == [1, 2])
     }
 
-    @Test("前日のセッションは次のロードで最後のセットの時刻で閉じ、今日は新しいセッションになる")
+    @Test("前の日の 2:00 を過ぎた後のロードで、前の日のセッションは最後のセットの時刻で閉じ、今日は新しいセッションになる")
     func staleSessionClosedOnLoad() async throws {
         let clock = TestClock("2026-09-29T07:00:00+09:00")
         let source = MockWorkoutDataSource(exercises: [bench])
@@ -322,19 +359,27 @@ struct WorkoutSessionStoreTests {
         _ = await store.addSet(exercise: bench, input: WorkoutSetInput(weight: 60, reps: 10))
         let lastSetAt = clock.now
 
+        // 翌日の 1:00 はまだ前の日が開いている (今日の記録が無い): 閉じない
+        clock.now = date("2026-09-30T01:00:00+09:00")
+        await store.load()
+        #expect(source.sessions.first?.isInProgress == true)
+        #expect(store.openDays == [date("2026-09-30T00:00:00+09:00"), date("2026-09-29T00:00:00+09:00")])
+
         clock.now = date("2026-09-30T07:00:00+09:00")
         await store.load()
+        #expect(store.openDays == [date("2026-09-30T00:00:00+09:00")])
         #expect(store.session == nil)
         #expect(store.sets.isEmpty)
         #expect(source.sessions.first?.endedAt == WorkoutLogic.endDate(startedAt: lastSetAt, now: lastSetAt))
 
         _ = await store.addSet(exercise: bench, input: WorkoutSetInput(weight: 62.5, reps: 8))
         #expect(source.sessions.count == 2)
+        #expect(source.sessions.last?.day == date("2026-09-30T00:00:00+09:00"))
         await store.loadHistory(exerciseId: bench.id)
         #expect(store.previousDay(for: bench.id)?.sets.map(\.weight) == [60])
     }
 
-    @Test("日付をまたいで開いたままの画面から記録しても、前日のセッションに混ざらない")
+    @Test("日付をまたいで開いたままの画面から記録すると、選んでいた前の日のセッションに入る (アプリは時刻で日を振り分けない)")
     func recordAcrossMidnightWithoutReload() async throws {
         let clock = TestClock("2026-09-29T23:50:00+09:00")
         let source = MockWorkoutDataSource(exercises: [bench])
@@ -342,9 +387,10 @@ struct WorkoutSessionStoreTests {
         await store.load()
         _ = await store.addSet(exercise: bench, input: WorkoutSetInput(weight: 60, reps: 10))
         clock.now = date("2026-09-30T00:10:00+09:00")
-        _ = await store.addSet(exercise: bench, input: WorkoutSetInput(weight: 60, reps: 10))
-        #expect(source.sessions.count == 2)
-        #expect(source.sessions.filter(\.isInProgress).count == 1)
+        _ = try (await store.addSet(exercise: bench, input: WorkoutSetInput(weight: 60, reps: 10))).get()
+        #expect(source.sessions.count == 1)
+        #expect(source.sets.map(\.day) == [date("2026-09-29T00:00:00+09:00"), date("2026-09-29T00:00:00+09:00")])
+        #expect(source.sets.map(\.setIndex).sorted() == [1, 2])
     }
 
     @Test("記録ボタンの二度押しで同じ set_index / セッションを重複 INSERT しない")
@@ -365,7 +411,7 @@ struct WorkoutSessionStoreTests {
         #expect(source.sessions.count == 1)
     }
 
-    @Test("INSERT 後に応答だけ失われたセットは、翌日の自動クローズで破棄 (CASCADE) されない")
+    @Test("INSERT 後に応答だけ失われたセットは、もう記録できない日の片付け (ロード) で破棄 (CASCADE) されない")
     func lostResponseSetSurvivesClose() async throws {
         let clock = TestClock("2026-09-29T07:00:00+09:00")
         let source = MockWorkoutDataSource(exercises: [bench])
@@ -382,12 +428,18 @@ struct WorkoutSessionStoreTests {
         #expect(source.sessions.first?.endedAt != nil)
     }
 
-    @Test("セットの無い前日セッションは破棄する")
+    @Test("セットの無いセッションは、もう記録できない日なら破棄する。前の日の 2:00 より前は残す (まだ記録できる)")
     func emptyStaleSessionDeleted() async throws {
         let stale = WorkoutSession(id: UUID(), actualTaskId: nil, routineId: nil,
-                                   startedAt: date("2026-09-29T07:00:00+09:00"), endedAt: nil, note: nil)
+                                   startedAt: date("2026-09-29T07:00:00+09:00"), endedAt: nil, note: nil,
+                                   day: date("2026-09-29T00:00:00+09:00"))
+        let clock = TestClock("2026-09-30T01:59:00+09:00")
         let source = MockWorkoutDataSource(exercises: [bench], sessions: [stale])
-        let store = WorkoutSessionStore(dataSource: source, calendar: jst, now: { date("2026-09-30T07:00:00+09:00") })
+        let store = WorkoutSessionStore(dataSource: source, calendar: jst, now: { clock.now })
+        await store.load()
+        #expect(source.sessions.map(\.id) == [stale.id])
+
+        clock.now = date("2026-09-30T07:00:00+09:00")
         await store.load()
         #expect(source.sessions.isEmpty)
     }
@@ -413,6 +465,7 @@ struct WorkoutSessionStoreTests {
 
         clock.now = date("2026-09-30T07:00:00+09:00")
         await store.load()
+        #expect(store.cards.isEmpty)
         let card = await store.addPlannedExercise(bench.id)
         let drafts = try #require(store.drafts[card.id])
         #expect(drafts.map(\.input.weight) == [60, 65])
@@ -449,7 +502,7 @@ struct WorkoutSessionStoreTests {
         store.applyToRemaining(cardId: card.id, from: drafts[1].id)
         #expect(store.drafts[card.id]?.map(\.input.weight) == [40, 70, 70])
         #expect(store.drafts[card.id]?.map(\.input.isWarmup) == [true, false, false])
-        #expect(store.bestOneRMBeforeToday(exerciseId: bench.id) == WorkoutProgress.estimatedOneRM(weight: 65, reps: 8))
+        #expect(store.bestOneRMBeforeActiveDay(exerciseId: bench.id) == WorkoutProgress.estimatedOneRM(weight: 65, reps: 8))
     }
 
     @Test("記録しても種目の並びは追加した順のまま")
@@ -567,7 +620,7 @@ struct WorkoutSetEditTests {
         #expect(source.sets.map(\.setIndex).sorted() == [1, 2, 3])
     }
 
-    @Test("今日の唯一のセットを取り消すと今日は未記録に戻る (継続の recordedToday = !sets.isEmpty)")
+    @Test("今日の唯一のセットを取り消すと今日は未記録に戻る (継続の live = 開いている日の !sets(on:).isEmpty)")
     func undoOnlySetClearsRecordedToday() async throws {
         let clock = TestClock("2026-10-03T07:00:00+09:00")
         let source = MockWorkoutDataSource(exercises: [bench])

@@ -95,13 +95,12 @@ struct TrainingContentPage: View {
         }
     }
 
-    /// その日の総ボリューム (週の総ボリュームと同じ数え方で、その日のセットだけ)
+    /// その日の総ボリューム (週の総ボリュームと同じ数え方で、その日 (セットの day) のセットだけ)
     private func dayVolume(_ day: Date) -> Double? {
         let week = WorkoutSummary.weekStart(containing: day, calendar: calendar)
         let key = WorkoutSummary.dayKey(day, calendar: calendar)
-        let sets = WorkoutSummary.mergeToday(historySets: historyStore.sets(inWeekStarting: week), todaySets: store.sets,
-                                             today: today, calendar: calendar)
-            .filter { $0.completedAt.map { WorkoutSummary.dayKey($0, calendar: calendar) == key } ?? false }
+        let sets = WorkoutSummary.mergeLive(history: historyStore.sets(inWeekStarting: week), live: liveSets)
+            .filter { WorkoutSummary.dayKey($0.day, calendar: calendar) == key }
         return WorkoutProgress.value(of: .volume, in: sets)
     }
 
@@ -185,9 +184,13 @@ struct TrainingContentPage: View {
     }
 
     private func totals(_ week: Date, through: Date? = nil) -> WeekTotals {
-        let sets = WorkoutSummary.mergeToday(historySets: historyStore.sets(inWeekStarting: week), todaySets: store.sets,
-                                             today: today, calendar: calendar)
+        let sets = WorkoutSummary.mergeLive(history: historyStore.sets(inWeekStarting: week), live: liveSets)
         return WorkoutSummary.weekTotals(sets: sets, exercisesById: store.exercisesById, week: week, through: through, calendar: calendar)
+    }
+
+    /// 開いている日 → その日の記録の store のセット (週の外の日も入るが、weekTotals・dayVolume が日で絞る)
+    private var liveSets: [Date: [WorkoutSet]] {
+        WorkoutSummary.liveSets(openDays: store.openDays, setsOn: store.sets(on:))
     }
 
     /// 部位 → 色は固定 (週をまたいでも同じ部位は同じ色)

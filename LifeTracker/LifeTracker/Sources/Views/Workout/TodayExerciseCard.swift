@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// 今日の記録画面のカード 1 枚 (List の Section)。WorkoutView から挙動を変えずに切り出したもの。
+/// 記録画面 (開いている日) のカード 1 枚 (List の Section)。WorkoutView から挙動を変えずに切り出したもの。
 /// 同じ種目のカードが 2 枚あっても見出しは種目名だけ (2026-10-04 本人「表示上は2回目などは不要」)。
-/// セット番号・見出しの「今日 …」・前回はこのカードの分 (前回は同じ順番のかたまり = Q2「a」)
+/// セット番号・見出しの「今日 …」・前回はこのカードの分 (前回は同じ順番のかたまり = Q2「a」)。
+/// 前の日を開いているときは「今日」を「この日」と呼ぶ (見出しとメニュー。WorkoutSummary.dayWord)
 struct TodayExerciseCard: View {
     @ObservedObject var store: WorkoutSessionStore
     let card: TodayCard
@@ -23,6 +24,7 @@ struct TodayExerciseCard: View {
         let drafts = store.drafts[card.id] ?? []
         let columns = SetColumn.columns(for: exercise)
         let numbers = WorkoutView.setNumbers(warmups: completed.map(\.isWarmup) + drafts.map(\.input.isWarmup))
+        let dayWord = WorkoutSummary.dayWord(activeDay: store.activeDay, today: store.today)
 
         Section {
             SetHeaderRow(columns: columns)
@@ -80,7 +82,7 @@ struct TodayExerciseCard: View {
                                     .font(.caption)
                             }
                             if let headline = WorkoutSummary.cardHeadline(kind: exercise.metricKind, todaySets: completed,
-                                                                          previousSets: store.previousSets(for: card)) {
+                                                                          previousSets: store.previousSets(for: card), dayWord: dayWord) {
                                 Text(headline)
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(Color.secondary)
@@ -89,7 +91,7 @@ struct TodayExerciseCard: View {
                     }
                 }
                 Spacer()
-                menu(isRecorded: !completed.isEmpty)
+                menu(isRecorded: !completed.isEmpty, dayWord: dayWord)
             }
             .textCase(nil)
         } footer: {
@@ -101,14 +103,14 @@ struct TodayExerciseCard: View {
     }
 
     /// ⋮ はすべてのカードに出す。記録済みのカードは「種目を並べ替え」だけ (実施した順を直す。Q3「A」)
-    private func menu(isRecorded: Bool) -> some View {
+    private func menu(isRecorded: Bool, dayWord: String) -> some View {
         Menu {
             if !isRecorded {
                 Button("種目を入れ替え", systemImage: "arrow.left.arrow.right", action: onReplace)
             }
             Button("種目を並べ替え", systemImage: "arrow.up.arrow.down", action: onReorder)
             if !isRecorded {
-                Button("今日から外す", systemImage: "minus.circle", role: .destructive) {
+                Button("\(dayWord)から外す", systemImage: "minus.circle", role: .destructive) {
                     Task { await store.removePlannedCard(card) }
                 }
             }

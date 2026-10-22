@@ -20,10 +20,12 @@ private func exercise(_ name: String) -> Exercise {
     Exercise(id: UUID(), name: name, muscleGroup: .chest, equipment: .barbell, metricKind: .weightReps, note: nil, isArchived: false, sortOrder: nil)
 }
 
+/// 日を指定しなければ at の JST の日 (時刻なしは 10/4)
 private func set(_ exercise: Exercise, session: UUID, entry: UUID, _ index: Int, weight: Double, reps: Int = 10,
-                 warmup: Bool = false, at: Date?) -> WorkoutSet {
+                 warmup: Bool = false, at: Date?, day: Date? = nil) -> WorkoutSet {
     WorkoutSet(id: UUID(), sessionId: session, exerciseId: exercise.id, entryId: entry, setIndex: index, weight: weight, reps: reps,
-               durationSec: nil, distanceM: nil, rpe: nil, isWarmup: warmup, completedAt: at)
+               durationSec: nil, distanceM: nil, rpe: nil, isWarmup: warmup, completedAt: at,
+               day: day ?? trainingDayJST(at ?? jstDate("2026-10-04T07:00:00")))
 }
 
 private func entry(_ id: UUID, session: UUID, _ exercise: Exercise, _ order: Int) -> WorkoutEntry {
@@ -148,7 +150,8 @@ struct WorkoutEntryStoreTests {
 
     @Test("再読み込みは entry の sort_order 順でカードを作る (記録時刻順ではない)")
     func loadUsesSortOrder() async {
-        let session = WorkoutSession(id: UUID(), actualTaskId: nil, routineId: nil, startedAt: jstDate("2026-10-04T06:50:00"), endedAt: nil, note: nil)
+        let session = WorkoutSession(id: UUID(), actualTaskId: nil, routineId: nil, startedAt: jstDate("2026-10-04T06:50:00"), endedAt: nil, note: nil,
+                                     day: jstDate("2026-10-04T00:00:00"))
         let e1 = UUID(), e2 = UUID(), e3 = UUID()
         let (_, store) = makeStore(
             sets: [set(bench, session: session.id, entry: e1, 1, weight: 60, at: jstDate("2026-10-04T07:00:00")),
@@ -298,7 +301,8 @@ struct WorkoutEntryStoreTests {
 
     @Test("未記録カードを外すとセットの無い entry の残骸も消える (E6)")
     func removePlannedDiscardsEmptyEntry() async throws {
-        let session = WorkoutSession(id: UUID(), actualTaskId: nil, routineId: nil, startedAt: jstDate("2026-10-04T06:50:00"), endedAt: nil, note: nil)
+        let session = WorkoutSession(id: UUID(), actualTaskId: nil, routineId: nil, startedAt: jstDate("2026-10-04T06:50:00"), endedAt: nil, note: nil,
+                                     day: jstDate("2026-10-04T00:00:00"))
         let residue = entry(UUID(), session: session.id, bench, 1)
         let (source, store) = makeStore(sessions: [session], entries: [residue])
         await store.load()
@@ -319,11 +323,12 @@ struct WorkoutEntryDataTests {
     @Test("Mock: entry と set の種目の不一致・同じ entry の同じ番号・同じ sort_order・セットのある entry の削除を拒む")
     func mockConstraints() async throws {
         let source = MockWorkoutDataSource(exercises: [bench, squat])
-        let s = try await source.startSession(routineId: nil, startedAt: Date())
+        let day = jstDate("2026-10-04T00:00:00"), at = jstDate("2026-10-04T07:00:00")
+        let s = try await source.startSession(day: day, routineId: nil, startedAt: at)
         let e = try await source.addEntry(sessionId: s.id, exerciseId: bench.id, sortOrder: 1)
         func new(_ exerciseId: UUID, _ index: Int) -> NewWorkoutSet {
             NewWorkoutSet(sessionId: s.id, exerciseId: exerciseId, entryId: e.id, setIndex: index, weight: 60, reps: 10,
-                          durationSec: nil, distanceM: nil, isWarmup: false, completedAt: Date())
+                          durationSec: nil, distanceM: nil, isWarmup: false, completedAt: at, day: day)
         }
         await #expect(throws: MockWorkoutDataSource.MockError.entryMismatch) { _ = try await source.addSet(new(squat.id, 1)) }
         _ = try await source.addSet(new(bench.id, 1))
@@ -348,12 +353,14 @@ struct WorkoutEntryDataTests {
         #expect(programs.program(withSameOrderAs: [bench.id, squat.id]) == nil)
     }
 
+    /// 23:50 に 9/29 へ記録し、0:10 に今日 (9/30) を選んで記録した = 日ごとに別のセッション (0015 でセットの日 = セッションの日)。
+    /// 1 つのセッションが 0 時をまたぐ場合 (0:10 に前の日へ記録) は前の日に数える: 集計を set.day にする段階 3 のテストで見る
     @Test("履歴 store: 週のセッションの entry を取り、その日にセットのある entry だけを返す (E4)")
     func historyEntries() async throws {
-        let session = UUID(), e1 = UUID(), e2 = UUID()
+        let previous = UUID(), today = UUID(), e1 = UUID(), e2 = UUID()
         let source = MockWorkoutDataSource(exercises: [bench], sets: [
-            set(bench, session: session, entry: e1, 1, weight: 60, at: jstDate("2026-09-29T23:50:00")),
-            set(bench, session: session, entry: e2, 1, weight: 50, at: jstDate("2026-09-30T00:10:00")),
+            set(bench, session: previous, entry: e1, 1, weight: 60, at: jstDate("2026-09-29T23:50:00")),
+            set(bench, session: today, entry: e2, 1, weight: 50, at: jstDate("2026-09-30T00:10:00")),
         ])
         let store = WorkoutHistoryStore(dataSource: source, calendar: jst)
         await store.ensureLoaded(weekStarts: [jstDate("2026-09-28T00:00:00")])

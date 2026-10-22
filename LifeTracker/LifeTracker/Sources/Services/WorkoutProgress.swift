@@ -50,7 +50,7 @@ enum ProgressMetric: String, CaseIterable, Identifiable {
     }
 }
 
-/// 1 日分のセット (JST の暦日でまとめる。1 日 = 1 セッションの運用)
+/// 1 日分のセット (トレーニングの日 = セットの day でまとめる。1 日 = 1 セッション。0015)
 struct DailySets: Identifiable, Equatable {
     let day: Date
     let sets: [WorkoutSet]
@@ -59,10 +59,11 @@ struct DailySets: Identifiable, Equatable {
 
 /// 前回参照・推移・履歴の導出。pure (DB / Singleton に触れない)
 enum WorkoutProgress {
-    /// 日ごとにまとめる。新しい日が先頭、日の中は記録順
+    /// 日 (セットの day) ごとにまとめる。completed のセットだけ。新しい日が先頭、日の中は記録順
+    /// (前の日に 0:30 に記録したセットは前の日に入る)
     static func daily(_ sets: [WorkoutSet], calendar: Calendar) -> [DailySets] {
         let dated = sets.filter { $0.completedAt != nil }
-        let grouped = Dictionary(grouping: dated) { calendar.startOfDay(for: $0.completedAt!) }
+        let grouped = Dictionary(grouping: dated) { calendar.startOfDay(for: $0.day) }
         return grouped
             .map { day, sets in
                 DailySets(day: day, sets: sets.sorted { ($0.completedAt!, $0.setIndex) < ($1.completedAt!, $1.setIndex) })
@@ -70,10 +71,10 @@ enum WorkoutProgress {
             .sorted { $0.day > $1.day }
     }
 
-    /// 今日より前で最も新しい日 (「前回」)
-    static func previousDay(_ sets: [WorkoutSet], today: Date, calendar: Calendar) -> DailySets? {
-        let todayStart = calendar.startOfDay(for: today)
-        return daily(sets, calendar: calendar).first { $0.day < todayStart }
+    /// その日 (記録する日) より前で最も新しい日 (「前回」)
+    static func previousDay(_ sets: [WorkoutSet], before day: Date, calendar: Calendar) -> DailySets? {
+        let dayStart = calendar.startOfDay(for: day)
+        return daily(sets, calendar: calendar).first { $0.day < dayStart }
     }
 
     /// 1 日分の指標値。ウォームアップは除外し、該当セットが無ければ nil

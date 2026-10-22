@@ -42,9 +42,9 @@ struct ExerciseProgressSection: View {
         }
     }
 
-    /// 推移一覧: 記録がある種目を種目マスタの並び順で (今日初めて記録した種目も含める)
+    /// 推移一覧: 記録がある種目を種目マスタの並び順で (開いている日に初めて記録した種目も含める)
     private var progressExercises: [Exercise] {
-        let recorded = historyStore.recordedExerciseIds.union(store.sets.map(\.exerciseId))
+        let recorded = historyStore.recordedExerciseIds.union(store.openDays.flatMap { store.sets(on: $0) }.map(\.exerciseId))
         return store.exercises.filter { recorded.contains($0.id) }
     }
 }
@@ -65,7 +65,7 @@ private struct ProgressExerciseRow: View {
 }
 
 /// 強さ (人体図・部位の一覧) と心肺 (docs/body-strength-and-heatmap-period.md「画面」1〜3)。
-/// 入力は 26 週の先読み＋今日の分 (mergeToday)。期間の週が全部読めるまで級を出さない (A-6)
+/// 入力は 26 週の先読み＋開いている日の分 (mergeLive)。期間の週が全部読めるまで級を出さない (A-6)
 struct BodyStrengthSections: View {
     @ObservedObject var store: WorkoutSessionStore
     @ObservedObject var historyStore: WorkoutHistoryStore
@@ -86,7 +86,8 @@ struct BodyStrengthSections: View {
     var body: some View {
         let interval = period.interval(today: today, calendar: calendar)
         let isLoaded = period.weekStarts(today: today, calendar: calendar).allSatisfy { historyStore.isLoaded(weekStart: $0) }
-        let sets = WorkoutSummary.mergeToday(historySets: historyStore.loadedSets, todaySets: store.sets, today: today, calendar: calendar)
+        let sets = WorkoutSummary.mergeLive(history: historyStore.loadedSets,
+                                            live: WorkoutSummary.liveSets(openDays: store.openDays, setsOn: store.sets(on:)))
         let summary = summary(sets: sets, interval: interval, isLoaded: isLoaded)
         // 見出しなし (ナビバーの「ランク」がページを示す)
         Section {
@@ -328,7 +329,7 @@ struct MuscleDetailSheet: View {
             }
             if case .level(_, let best, let bodyWeight) = entry.status {
                 Text("使った記録: \(WorkoutLogic.summary(of: best, kind: entry.exercise.metricKind))"
-                     + (best.completedAt.map { " · \(WorkoutSummary.dayLabel($0, calendar: calendar))" } ?? "")
+                     + " · \(WorkoutSummary.dayLabel(best.day, calendar: calendar))"
                      + "（体重 \(WorkoutLogic.formatWeight(bodyWeight))kg）")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)

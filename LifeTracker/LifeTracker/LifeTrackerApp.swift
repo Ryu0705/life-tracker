@@ -18,7 +18,7 @@ struct LifeTrackerApp: App {
         WindowGroup {
             switch initResult {
             case .success(let setup):
-                AppRootView(sources: setup.sources, auth: setup.auth, clockTick: clockTick)
+                AppRootView(sources: setup.sources, auth: setup.auth, clockTick: clockTick, workoutNowOffset: setup.workoutNowOffset)
             case .failure(let error):
                 ConfigErrorView(error: error)
             }
@@ -86,17 +86,24 @@ struct LifeTrackerApp: App {
             }
 
             let workout: WorkoutDataSource
+            // トレーニングのタブの時計のずれ (-mock-now − 起動の時刻)。本物は 0
+            let workoutNowOffset: TimeInterval
             #if DEBUG
             if plan.memoryWorkout {
                 let arguments = ProcessInfo.processInfo.arguments
-                let mock = WorkoutFixtures.makeMockDataSource(withProfile: !arguments.contains("-mock-no-profile"))
+                workoutNowOffset = plan.mockNow.map { $0.timeIntervalSinceNow } ?? 0
+                // 確認用のデータもずらした時刻で作る (「昨日」が -mock-now の昨日になるように)
+                let mock = WorkoutFixtures.makeMockDataSource(now: Date().addingTimeInterval(workoutNowOffset),
+                                                              withProfile: !arguments.contains("-mock-no-profile"))
                 // 期間の取得を 1.5 秒遅らせる (分析のページ切替中の取得の確認用)
                 if arguments.contains("-mock-fetch-delay") { mock.fetchSetsDelayNanoseconds = 1_500_000_000 }
                 workout = mock
             } else {
+                workoutNowOffset = 0
                 workout = SupabaseWorkoutDataSource(client: try client(), access: try access())
             }
             #else
+            workoutNowOffset = 0
             workout = SupabaseWorkoutDataSource(client: try client(), access: try access())
             #endif
 
@@ -122,7 +129,7 @@ struct LifeTrackerApp: App {
             auth.start()
 
             let sources = AppDataSources(day: day, workout: workout, schedule: schedule, sleep: sleep)
-            return .success(AppSetup(sources: sources, auth: auth))
+            return .success(AppSetup(sources: sources, auth: auth, workoutNowOffset: workoutNowOffset))
         } catch {
             return .failure(error)
         }
@@ -157,6 +164,8 @@ struct AppDataSources {
 struct AppSetup {
     let sources: AppDataSources
     let auth: AuthStore
+    /// トレーニングのタブの時計のずれ (秒)。`-mock-now` のときだけ 0 以外 (LaunchPlan)
+    let workoutNowOffset: TimeInterval
 }
 
 /// 認証の状態で画面を出し分ける (起動中 → 起動画面／未サインイン → サインインの画面／コードの入力 → コードの画面／サインイン済み → TabView)。
@@ -165,6 +174,8 @@ struct AppRootView: View {
     let sources: AppDataSources
     @ObservedObject var auth: AuthStore
     let clockTick: ClockTick
+    /// トレーニングのタブの時計のずれ (AppSetup.workoutNowOffset)
+    let workoutNowOffset: TimeInterval
 
     var body: some View {
         Group {
@@ -177,7 +188,7 @@ struct AppRootView: View {
                 EmailCodeView(store: auth, email: email)
             case .signedIn(let userID):
                 // 人が変わったら store を作り直させる (設計 §7・M21)。サインアウトはプロフィールのタブから (計画 §2-6。2026-10-22 分析から移した)
-                MainTabView(sources: sources, clockTick: clockTick, email: auth.signedInEmail)
+                MainTabView(sources: sources, clockTick: clockTick, workoutNowOffset: workoutNowOffset, email: auth.signedInEmail)
                     .environment(\.signOutAction, SignOutAction { await auth.signOut() })
                     .id(userID)
             }
@@ -210,15 +221,18 @@ struct AppRootView: View {
 struct MainTabView: View {
     let sources: AppDataSources
     let clockTick: ClockTick
+    /// トレーニングのタブの時計のずれ (AppSetup.workoutNowOffset)。ほかのタブは本物の時計のまま
+    let workoutNowOffset: TimeInterval
     /// サインイン中のメールアドレス (プロフィールのタブの「アカウント」に出す)。nil なら行を出さない
     let email: String?
     /// プロフィールと体重。トレーニングのタブ (分析の強さ) とプロフィールのタブで同じものを見る (どちらで直してもすぐもう片方に出る)。
     /// 人が変わればこの画面ごと `.id(userID)` で作り直すので、store も作り直される
     @StateObject private var profileStore: ProfileStore
 
-    init(sources: AppDataSources, clockTick: ClockTick, email: String?) {
+    init(sources: AppDataSources, clockTick: ClockTick, workoutNowOffset: TimeInterval, email: String?) {
         self.sources = sources
         self.clockTick = clockTick
+        self.workoutNowOffset = workoutNowOffset
         self.email = email
         _profileStore = StateObject(wrappedValue: ProfileStore(dataSource: sources.workout, calendar: HomeView.defaultCalendar))
     }
@@ -232,7 +246,8 @@ struct MainTabView: View {
             }
             .accessibilityIdentifier("tab.schedule")
             Tab("トレーニング", systemImage: "dumbbell") {
-                WorkoutView(dataSource: sources.workout, profileStore: profileStore)
+                // 時計は予定のタブと同じ ClockTick (毎分)。記録の日の判定だけ workoutNowOffset でずらす
+                WorkoutView(dataSource: sources.workout, profileStore: profileStore, clockTick: clockTick, nowOffset: workoutNowOffset)
             }
             .accessibilityIdentifier("tab.workout")
             Tab("睡眠", systemImage: "bed.double") {

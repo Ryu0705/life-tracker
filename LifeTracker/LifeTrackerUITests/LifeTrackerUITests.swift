@@ -124,6 +124,67 @@ final class LifeTrackerUITests: XCTestCase {
         openTab(app, "tab.workout", landmark: app.buttons["workout.analysis"], "トレーニング")
     }
 
+    /// 前の日に 0:30 に記録する (docs/training-day-implementation-plan.md 付録 B-5):
+    /// `-mock-now` で 10/23(金) 0:30 に起動 → トレーニングのタブ → 週の帯で前の日 10/22(木) を選ぶ → 編集できる一覧が出る →
+    /// 種目を足して ✓ → 前の日の合計が 1 セット増え、上の帯は前の日のまま。今日 (10/23) には点が付かない
+    /// (確認用のデータは前の日にも記録がある (背中の日 3 種目 8 セット) ので、点は前の日の「記録あり」と今日の「無し」で見る)
+    @MainActor
+    func testRecordPreviousDayAfterMidnight() throws {
+        let app = XCUIApplication()
+        app.launchArguments = Self.mockSignedIn + ["-mock-now", "2026-10-23T00:30:00+09:00"]
+        app.launch()
+
+        // サインイン済みで起動したときは、タブの識別子が付かないことがある (2026-10-23 の 2 回目の通しで、4 つのタブとも
+        // identifier なしの階層を実測)。識別子か、タブの名前で引く
+        let tab = app.tabBars.buttons.matching(NSPredicate(format: "identifier == %@ OR label == %@", "tab.workout", "トレーニング")).firstMatch
+        XCTAssertTrue(tab.waitForExistence(timeout: 10), "トレーニングのタブ")
+        tab.tap()
+        XCTAssertTrue(app.buttons["workout.analysis"].waitForExistence(timeout: 10), "トレーニング")
+        let previousDay = dayCell(app, "10/22(")
+        XCTAssertTrue(previousDay.waitForExistence(timeout: 10), "週の帯の前の日")
+        XCTAssertEqual(dayCell(app, "10/23(").label, "10/23(金)", "-mock-now の今日。まだ記録なし")
+        previousDay.tap()
+
+        // 前の日はまだ開いている (2:00 まで・今日に記録なし) ので、読むだけの画面ではなく編集できる一覧
+        XCTAssertTrue(app.buttons["今日へ"].waitForExistence(timeout: 5), "上の帯は前の日")
+        XCTAssertTrue(app.staticTexts["8セット"].waitForExistence(timeout: 5), "前の日の確認用の記録")
+        let addExercise = app.buttons["種目を追加"]
+        scrollUntilHittable(app, addExercise, "前の日の一覧の「種目を追加」")
+        addExercise.tap()
+
+        let bench = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "ベンチプレス")).firstMatch
+        XCTAssertTrue(bench.waitForExistence(timeout: 5), "種目の一覧")
+        bench.tap()
+        app.buttons["1種目を追加"].tap()
+
+        // 足したカードの 1 行目 (前回の値で埋まっている) を ✓
+        let check = app.buttons["セット1を記録"]
+        scrollUntilHittable(app, check, "足したカードの 1 行目の ✓")
+        check.tap()
+
+        XCTAssertTrue(app.staticTexts["9セット"].waitForExistence(timeout: 5), "前の日の合計に入る")
+        XCTAssertTrue(app.staticTexts["4種目"].exists)
+        XCTAssertTrue(app.buttons["今日へ"].exists, "上の帯は前の日のまま")
+        XCTAssertTrue(app.staticTexts["10/22(木)"].exists, "上の帯は前の日のまま")
+        XCTAssertEqual(dayCell(app, "10/22(").label, "10/22(木) 記録あり", "前の日に点")
+        XCTAssertEqual(dayCell(app, "10/23(").label, "10/23(金)", "今日 (時計の日) には点が付かない")
+    }
+
+    /// トレーニングの週の帯の日 (アクセシビリティの名前は「10/22(木)」＋記録があれば「 記録あり」)
+    @MainActor
+    private func dayCell(_ app: XCUIApplication, _ prefix: String) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+    }
+
+    /// 一覧を上へ送って、要素が押せるところまで出す
+    @MainActor
+    private func scrollUntilHittable(_ app: XCUIApplication, _ element: XCUIElement, _ name: String) {
+        for _ in 0..<8 where !(element.exists && element.isHittable) {
+            app.swipeUp()
+        }
+        XCTAssertTrue(element.waitForHittable(timeout: 5), name)
+    }
+
     /// サインインの後のタブから `identifier` のタブを開き、その中の `landmark` が出るのを待つ
     @MainActor
     private func openTab(_ app: XCUIApplication, _ identifier: String, landmark: XCUIElement, _ name: String) {

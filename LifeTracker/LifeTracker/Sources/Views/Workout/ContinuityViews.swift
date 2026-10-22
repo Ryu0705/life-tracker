@@ -56,8 +56,8 @@ struct WeeklyGoalSheet: View {
     init(continuity: ContinuityStore, today: Date) {
         self.continuity = continuity
         self.today = today
-        current = continuity.currentTarget
-        _target = State(initialValue: continuity.currentTarget ?? 3)
+        current = continuity.currentTarget(today: today)
+        _target = State(initialValue: continuity.currentTarget(today: today) ?? 3)
     }
 
     var body: some View {

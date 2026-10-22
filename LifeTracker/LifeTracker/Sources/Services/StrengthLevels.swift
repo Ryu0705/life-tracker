@@ -185,12 +185,13 @@ enum StrengthLevels {
     }
 
     /// 期間内の部位ごとの級。W 除外・アーカイブ済み種目 (exercisesById に無い) は除外 (週分析と同じ)。
-    /// sets には今日の分を合成したものを渡す (WorkoutSummary.mergeToday)
+    /// sets には開いている日の分を合成したものを渡す (WorkoutSummary.mergeLive)。
+    /// 期間とセットに当てる体重の日は、セットの day (トレーニングの日。前の日に 0:30 に記録したセットは前の日)
     static func summarize(sets: [WorkoutSet], exercisesById: [UUID: Exercise], standards: StrengthStandards,
                           sex: Sex, bodyWeights: [BodyWeightRecord], interval: (start: Date, end: Date),
                           calendar: Calendar) -> [MuscleStrength] {
         let inPeriod = sets.filter { set in
-            !set.isWarmup && (set.completedAt.map { interval.start <= $0 && $0 < interval.end } ?? false)
+            !set.isWarmup && set.completedAt != nil && isInPeriod(set, interval)
         }
         let byExercise = Dictionary(grouping: inPeriod, by: \.exerciseId)
         let weights = bodyWeights.sorted { $0.recordedOn < $1.recordedOn }
@@ -206,7 +207,7 @@ enum StrengthLevels {
             case .standard(let mapping, let standard):
                 var best: (level: Double, set: WorkoutSet, bodyWeight: Double)?
                 for set in exerciseSets {
-                    guard let bw = bodyWeight(on: calendar.startOfDay(for: set.completedAt!), sortedRecords: weights),
+                    guard let bw = bodyWeight(on: calendar.startOfDay(for: set.day), sortedRecords: weights),
                           let level = setLevel(set, kind: exercise.metricKind, mapping: mapping, standard: standard,
                                                standards: standards, sex: sex, bodyWeight: bw) else { continue }
                     if best == nil || level > best!.level { best = (level, set, bw) }
@@ -271,11 +272,16 @@ enum StrengthLevels {
     static func cardioTotals(sets: [WorkoutSet], exercisesById: [UUID: Exercise], interval: (start: Date, end: Date)) -> CardioTotals {
         let cardio = sets.filter { set in
             !set.isWarmup && exercisesById[set.exerciseId]?.muscleGroup == .cardio
-                && (set.completedAt.map { interval.start <= $0 && $0 < interval.end } ?? false)
+                && set.completedAt != nil && isInPeriod(set, interval)
         }
         return CardioTotals(count: cardio.count,
                             durationSec: cardio.compactMap(\.durationSec).reduce(0, +),
                             distanceM: cardio.compactMap(\.distanceM).reduce(0, +))
+    }
+
+    /// 期間 (日の始まりの半開区間) にセットの day が入るか
+    private static func isInPeriod(_ set: WorkoutSet, _ interval: (start: Date, end: Date)) -> Bool {
+        interval.start <= set.day && set.day < interval.end
     }
 
     private static func order(_ a: ExerciseStrength, _ b: ExerciseStrength) -> Bool {

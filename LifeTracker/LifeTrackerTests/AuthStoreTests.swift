@@ -764,6 +764,47 @@ struct LaunchPlanTests {
                                    environment: ["XCTestConfigurationFilePath": "/tmp/x"], isDebug: false)
         #expect(plan == LaunchPlan(auth: .supabase, memoryDay: false, memoryWorkout: false))
     }
+
+    @Test("-mock-now: 次の引数を ISO8601 で読む。読めない・-mock-workout が無い・Release・テストの環境では効かない (付録 B-2)")
+    func mockNow() throws {
+        let value = "2026-10-23T00:30:00+09:00"
+        let expected = try #require(ISO8601DateFormatter().date(from: "2026-10-22T15:30:00Z"))
+        let plan = LaunchPlan.make(arguments: ["-mock-day", "-mock-workout", "-mock-auth", "-mock-now", value], environment: [:], isDebug: true)
+        #expect(plan == LaunchPlan(auth: .mockSignedIn, memoryDay: true, memoryWorkout: true, mockNow: expected))
+
+        // 読めない値・値が無い
+        #expect(LaunchPlan.make(arguments: ["-mock-workout", "-mock-now", "2026-10-23 00:30"], environment: [:], isDebug: true).mockNow == nil)
+        #expect(LaunchPlan.make(arguments: ["-mock-workout", "-mock-now"], environment: [:], isDebug: true).mockNow == nil)
+        // -mock-workout が無ければ本物の DB なので効かない
+        #expect(LaunchPlan.make(arguments: ["-mock-day", "-mock-auth", "-mock-now", value], environment: [:], isDebug: true).mockNow == nil)
+        // Release・テストの環境
+        #expect(LaunchPlan.make(arguments: ["-mock-workout", "-mock-now", value], environment: [:], isDebug: false).mockNow == nil)
+        #expect(LaunchPlan.make(arguments: ["-mock-workout", "-mock-now", value],
+                                environment: ["XCTestConfigurationFilePath": "/tmp/x"], isDebug: true).mockNow == nil)
+    }
+
+    @Test("-mock-now の組み立て: トレーニングの時計のずれは -mock-now − 起動の時刻。指定なしは 0")
+    func makeSetupNowOffset() async throws {
+        let mockNow = Date().addingTimeInterval(-3 * 3600)
+        let shifted = LaunchPlan(auth: .mockSignedIn, memoryDay: true, memoryWorkout: true, mockNow: mockNow)
+        guard case .success(let setup) = LifeTrackerApp.makeSetup(plan: shifted, makeClient: { throw AuthFailure.unknown("no client") },
+                                                                  sideEffects: .disabled) else {
+            Issue.record("組み立てが失敗した")
+            return
+        }
+        #expect(abs(setup.workoutNowOffset - (-3 * 3600)) < 5)
+        let auth = setup.auth
+        await AuthTestSupport.waitUntil { auth.phase != .launching }
+        guard case .success(let plain) = LifeTrackerApp.makeSetup(plan: LaunchPlan(auth: .mockSignedIn, memoryDay: true, memoryWorkout: true),
+                                                                  makeClient: { throw AuthFailure.unknown("no client") },
+                                                                  sideEffects: .disabled) else {
+            Issue.record("組み立てが失敗した")
+            return
+        }
+        #expect(plain.workoutNowOffset == 0)
+        let plainAuth = plain.auth
+        await AuthTestSupport.waitUntil { plainAuth.phase != .launching }
+    }
 }
 
 // MARK: - 小さな規則

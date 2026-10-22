@@ -2,8 +2,9 @@ import Foundation
 import Combine
 
 /// 過去日・週帯・分析・組み合わせ用の読み取り専用 store。書き込み API は持たない。
-/// 今日の store (WorkoutSessionStore) とは分ける: 日付選択の状態を今日の store に持ち込むと、
-/// 過去日を見ただけで今日の未保存の行が消える事故になるため。今日の分は常に今日の store から合成する (WorkoutSummary.mergeToday)
+/// 記録の store (WorkoutSessionStore) とは分ける: 日付選択の状態を記録の store に持ち込むと、
+/// 過去日を見ただけで今日の未保存の行が消える事故になるため。開いている日 (今日と、開いていれば前の日) の分は
+/// 常に記録の store から合成する (WorkoutSummary.mergeLive)。日はセットの day (トレーニングの日。0015)
 @MainActor
 final class WorkoutHistoryStore: ObservableObject {
     /// 週頭 (月曜 0:00) → その週のセット
@@ -27,7 +28,7 @@ final class WorkoutHistoryStore: ObservableObject {
         self.calendar = calendar
     }
 
-    /// 記録がある日 (週帯の点)。今日の分は呼び出し側で今日の store と合成する
+    /// 記録がある日 (週帯の点)。開いている日の分は呼び出し側で記録の store と合成する
     var recordedDays: Set<Date> {
         WorkoutSummary.recordedDays(weeks.values.flatMap { $0 }, calendar: calendar)
     }
@@ -64,12 +65,13 @@ final class WorkoutHistoryStore: ObservableObject {
             isLoading = !inFlight.isEmpty
         }
         do {
-            let fetched = try await dataSource.fetchSets(completedFrom: from, to: to)
+            let fetched = try await dataSource.fetchSets(daysFrom: from, to: to)
             let sessionIds = Set(fetched.map(\.sessionId)).subtracting(entriesById.values.map(\.sessionId))
             let entries = sessionIds.isEmpty ? [] : try await dataSource.fetchEntries(sessionIds: Array(sessionIds))
             guard startedGeneration == generation else { return }
             for entry in entries { entriesById[entry.id] = entry }
-            let byWeek = Dictionary(grouping: fetched) { WorkoutSummary.weekStart(containing: $0.completedAt!, calendar: calendar) }
+            // 週はセットの day で振り分ける (取得も day の範囲。日曜に 0:30 まで記録したセットは日曜の週)
+            let byWeek = Dictionary(grouping: fetched) { WorkoutSummary.weekStart(containing: $0.day, calendar: calendar) }
             for start in targets { weeks[start] = byWeek[start] ?? [] }
         } catch {
             report(error)
@@ -84,7 +86,8 @@ final class WorkoutHistoryStore: ObservableObject {
         }
     }
 
-    /// キャッシュを捨てる (今日のセッションが変わったとき。日跨ぎで昨日の分を取りこぼさないため)
+    /// キャッシュを捨てる (開いている日が閉じたとき・引っ張って更新。閉じた日の分は記録の store から履歴へ移るので、
+    /// 開いている間に記録した分を取りこぼさないため)
     func invalidate() {
         generation += 1
         inFlight = [:] // 取得中の結果は捨てるので、同じ週をすぐ取り直せるようにする
@@ -92,13 +95,14 @@ final class WorkoutHistoryStore: ObservableObject {
         entriesById = [:]
     }
 
+    /// その日 (セットの day) のセット
     func sets(on day: Date) -> [WorkoutSet] {
         let key = WorkoutSummary.dayKey(day, calendar: calendar)
         return sets(inWeekStarting: WorkoutSummary.weekStart(containing: day, calendar: calendar))
-            .filter { $0.completedAt.map { WorkoutSummary.dayKey($0, calendar: calendar) == key } ?? false }
+            .filter { WorkoutSummary.dayKey($0.day, calendar: calendar) == key }
     }
 
-    /// その日の entry (セットのある entry だけ。0 時またぎのセッションは、その日にセットがある entry だけ = E4)
+    /// その日の entry (セットのある entry だけ。セッションのセットはすべて同じ日 = セッションの day)
     func entries(on day: Date) -> [WorkoutEntry] {
         Set(sets(on: day).map(\.entryId)).compactMap { entriesById[$0] }
     }

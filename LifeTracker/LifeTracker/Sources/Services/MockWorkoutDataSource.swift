@@ -1,20 +1,32 @@
 import Foundation
 
 /// テスト / プレビュー用のインメモリ実装。DB の制約のうち画面の挙動に効くもの
-/// (進行中セッション同時 1 件・UNIQUE (entry_id, set_index)・UNIQUE (session_id, sort_order)・
-/// entry と set の exercise_id 一致 (複合 FK)・CASCADE・空 entry の削除) を再現する
+/// (1 人 1 日 1 セッション・時刻の窓 (日の 0:00〜翌日 2:00)・セットの日 = セッションの日・UNIQUE (entry_id, set_index)・
+/// UNIQUE (session_id, sort_order)・entry と set の (session_id, exercise_id) 一致 (複合 FK)・CASCADE・空 entry の削除) を再現する
 final class MockWorkoutDataSource: WorkoutDataSource {
     enum MockError: Error, Equatable {
-        case sessionAlreadyInProgress
         case duplicateSetIndex
         case notFound
         /// workout_entry の UNIQUE (session_id, sort_order)
         case duplicateEntrySortOrder
-        /// workout_set の複合 FK (entry_id, exercise_id) → workout_entry (id, exercise_id)
+        /// workout_set の複合 FK (entry_id, session_id, exercise_id) → workout_entry (id, session_id, exercise_id) (0015)
         case entryMismatch
         /// 複合 FK (NO ACTION): セットが残っている entry は消せない
         case entryHasSets
+        /// workout_session の UNIQUE (user_id, day) (0015)
+        case duplicateDay
+        /// started_at・completed_at が day の 0:00〜翌日 2:00 の外 (0015 の CHECK)
+        case outsideWindow
+        /// workout_set の外部キー (session_id, user_id, day) → workout_session (id, user_id, day) (0015)
+        case dayMismatch
     }
+
+    /// DB の date と同じ日の区切り (DateOnly と同じ JST)。テストの calendar に依らない
+    private static let jst: Calendar = {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        return cal
+    }()
 
     private(set) var exercises: [Exercise]
     private(set) var routines: [Routine]
@@ -30,14 +42,14 @@ final class MockWorkoutDataSource: WorkoutDataSource {
 
     /// テスト用の失敗注入: addSet の応答を遅らせる (二度押しの再現)
     var addSetDelayNanoseconds: UInt64 = 0
-    /// シミュレータ確認用: fetchSets(completedFrom:to:) の応答を遅らせる (分析のページ切替中の取得の再現)
+    /// シミュレータ確認用: fetchSets(daysFrom:to:) の応答を遅らせる (分析のページ切替中の取得の再現)
     var fetchSetsDelayNanoseconds: UInt64 = 0
-    /// テスト用: true の間 fetchSets(completedFrom:to:) の応答を止める (releaseFetchSets で返す)
+    /// テスト用: true の間 fetchSets(daysFrom:to:) の応答を止める (releaseFetchSets で返す)
     var holdsFetchSets = false
     private var fetchSetsWaiters: [CheckedContinuation<Void, Never>] = []
-    /// テスト用の失敗注入: 次の fetchSets(completedFrom:to:) を失敗させる
+    /// テスト用の失敗注入: 次の fetchSets(daysFrom:to:) を失敗させる
     var failNextFetchSets = false
-    /// テスト用: fetchSets(completedFrom:to:) の呼び出し回数 (履歴 store のキャッシュ確認)
+    /// テスト用: fetchSets(daysFrom:to:) の呼び出し回数 (履歴 store のキャッシュ確認)
     private(set) var fetchRangeCallCount = 0
     /// テスト用の失敗注入: 次の addSet は INSERT した後に応答だけ失う (回線断の再現)
     var dropNextAddSetResponse = false
@@ -124,16 +136,31 @@ final class MockWorkoutDataSource: WorkoutDataSource {
         routines[index] = Routine(id: r.id, name: r.name, note: r.note, isArchived: true, sortOrder: r.sortOrder)
     }
 
-    func fetchInProgressSession() async throws -> WorkoutSession? {
-        sessions.first { $0.isInProgress }
+    func fetchSessions(days: [Date]) async throws -> [WorkoutSession] {
+        sessions.filter { session in days.contains { Self.sameDay($0, session.day) } }
+            .sorted { $0.day < $1.day }
     }
 
-    func startSession(routineId: UUID?, startedAt: Date) async throws -> WorkoutSession {
-        guard !sessions.contains(where: \.isInProgress) else { throw MockError.sessionAlreadyInProgress }
+    func fetchOpenSessions() async throws -> [WorkoutSession] {
+        sessions.filter(\.isInProgress).sorted { $0.day < $1.day }
+    }
+
+    func startSession(day: Date, routineId: UUID?, startedAt: Date) async throws -> WorkoutSession {
+        guard !sessions.contains(where: { Self.sameDay($0.day, day) }) else { throw MockError.duplicateDay }
+        guard Self.isInWindow(startedAt, of: day) else { throw MockError.outsideWindow }
         let session = WorkoutSession(
             id: UUID(), actualTaskId: nil, routineId: routineId,
-            startedAt: startedAt, endedAt: nil, note: nil
+            startedAt: startedAt, endedAt: nil, note: nil, day: Self.jst.startOfDay(for: day)
         )
+        sessions.append(session)
+        return session
+    }
+
+    /// テスト用: 別端末がその日のセッションを先に作った状態を再現する (UNIQUE (user_id, day) に当たる)
+    @discardableResult
+    func insertSessionFromAnotherDevice(day: Date, startedAt: Date) -> WorkoutSession {
+        let session = WorkoutSession(id: UUID(), actualTaskId: nil, routineId: nil,
+                                     startedAt: startedAt, endedAt: nil, note: nil, day: Self.jst.startOfDay(for: day))
         sessions.append(session)
         return session
     }
@@ -143,7 +170,7 @@ final class MockWorkoutDataSource: WorkoutDataSource {
         let s = sessions[index]
         sessions[index] = WorkoutSession(
             id: s.id, actualTaskId: s.actualTaskId, routineId: s.routineId,
-            startedAt: s.startedAt, endedAt: endedAt, note: s.note
+            startedAt: s.startedAt, endedAt: endedAt, note: s.note, day: s.day
         )
     }
 
@@ -158,7 +185,10 @@ final class MockWorkoutDataSource: WorkoutDataSource {
     }
 
     func addSet(_ new: NewWorkoutSet) async throws -> WorkoutSet {
-        guard entries.contains(where: { $0.id == new.entryId && $0.exerciseId == new.exerciseId }) else {
+        guard let session = sessions.first(where: { $0.id == new.sessionId }) else { throw MockError.notFound }
+        guard Self.sameDay(session.day, new.day) else { throw MockError.dayMismatch }
+        guard Self.isInWindow(new.completedAt, of: new.day) else { throw MockError.outsideWindow }
+        guard entries.contains(where: { $0.id == new.entryId && $0.sessionId == new.sessionId && $0.exerciseId == new.exerciseId }) else {
             throw MockError.entryMismatch
         }
         guard !sets.contains(where: { $0.entryId == new.entryId && $0.setIndex == new.setIndex }) else {
@@ -167,7 +197,7 @@ final class MockWorkoutDataSource: WorkoutDataSource {
         let set = WorkoutSet(
             id: UUID(), sessionId: new.sessionId, exerciseId: new.exerciseId, entryId: new.entryId, setIndex: new.setIndex,
             weight: new.weight, reps: new.reps, durationSec: new.durationSec, distanceM: new.distanceM,
-            rpe: nil, isWarmup: new.isWarmup, completedAt: new.completedAt
+            rpe: nil, isWarmup: new.isWarmup, completedAt: new.completedAt, day: session.day
         )
         sets.append(set)
         if addSetDelayNanoseconds > 0 { try await Task.sleep(nanoseconds: addSetDelayNanoseconds) }
@@ -237,7 +267,7 @@ final class MockWorkoutDataSource: WorkoutDataSource {
         Set(sets.map(\.exerciseId))
     }
 
-    /// 止めている fetchSets(completedFrom:to:) の数
+    /// 止めている fetchSets(daysFrom:to:) の数
     var pendingFetchSets: Int { fetchSetsWaiters.count }
 
     func releaseFetchSets() {
@@ -246,7 +276,7 @@ final class MockWorkoutDataSource: WorkoutDataSource {
         released.forEach { $0.resume() }
     }
 
-    func fetchSets(completedFrom from: Date, to: Date) async throws -> [WorkoutSet] {
+    func fetchSets(daysFrom from: Date, to: Date) async throws -> [WorkoutSet] {
         fetchRangeCallCount += 1
         if holdsFetchSets { await withCheckedContinuation { fetchSetsWaiters.append($0) } }
         if fetchSetsDelayNanoseconds > 0 { try await Task.sleep(nanoseconds: fetchSetsDelayNanoseconds) }
@@ -254,14 +284,15 @@ final class MockWorkoutDataSource: WorkoutDataSource {
             failNextFetchSets = false
             throw MockError.notFound
         }
+        let (lower, upper) = (Self.jst.startOfDay(for: from), Self.jst.startOfDay(for: to))
         return sets
-            .filter { $0.completedAt.map { from <= $0 && $0 < to } ?? false }
-            .sorted { ($0.completedAt!, $0.setIndex) < ($1.completedAt!, $1.setIndex) }
+            .filter { $0.completedAt != nil && lower <= Self.jst.startOfDay(for: $0.day) && Self.jst.startOfDay(for: $0.day) < upper }
+            .sorted { ($0.day, $0.completedAt!, $0.setIndex, $0.id.uuidString) < ($1.day, $1.completedAt!, $1.setIndex, $1.id.uuidString) }
     }
 
+    /// view workout_training_day と同じ: completed_at のあるセットの day
     func fetchTrainingDays() async throws -> Set<Date> {
-        let calendar = Calendar.current
-        return Set(sets.compactMap(\.completedAt).map { calendar.startOfDay(for: $0) })
+        Set(sets.filter { $0.completedAt != nil }.map(\.day))
     }
 
     func fetchWeeklyGoals() async throws -> [WeeklyGoal] {
@@ -292,5 +323,14 @@ final class MockWorkoutDataSource: WorkoutDataSource {
         }
         bodyWeights.removeAll { $0.recordedOn == record.recordedOn }
         bodyWeights.append(record)
+    }
+
+    private static func sameDay(_ a: Date, _ b: Date) -> Bool {
+        jst.isDate(a, inSameDayAs: b)
+    }
+
+    /// 0015 の CHECK: day の 0:00 以上・翌日 2:00 未満
+    private static func isInWindow(_ at: Date, of day: Date) -> Bool {
+        jst.startOfDay(for: day) <= at && at < RecordWindow.closingTime(of: day, calendar: jst)
     }
 }

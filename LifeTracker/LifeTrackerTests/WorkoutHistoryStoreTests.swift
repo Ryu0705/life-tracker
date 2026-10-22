@@ -21,25 +21,30 @@ private func exercise(_ name: String, _ muscle: Exercise.MuscleGroup = .chest) -
 /// 既定は 1 つのセッション (日ごとの絞り込みはセットの completed_at で行うため)。entry は (セッション, 種目) ごと
 private let sharedSession = UUID()
 
+/// 日を指定しなければ at の JST の日 (時刻なしは 9/28)
 private func set(_ exercise: Exercise, _ index: Int = 1, weight: Double = 60, reps: Int = 10, at: Date?,
-                 session: UUID = sharedSession, entry: UUID? = nil) -> WorkoutSet {
+                 session: UUID = sharedSession, entry: UUID? = nil, day: Date? = nil) -> WorkoutSet {
     WorkoutSet(id: UUID(), sessionId: session, exerciseId: exercise.id, entryId: entry ?? backfillEntryId(session, exercise.id),
                setIndex: index, weight: weight, reps: reps,
-               durationSec: nil, distanceM: nil, rpe: nil, isWarmup: false, completedAt: at)
+               durationSec: nil, distanceM: nil, rpe: nil, isWarmup: false, completedAt: at,
+               day: day ?? trainingDayJST(at ?? jstDate("2026-09-28T00:00:00")))
 }
 
 @Suite("MockWorkoutDataSource — 期間取得")
 @MainActor
 struct MockWorkoutRangeTests {
-    @Test("半開区間 [from, to) で、completed_at が無いセットは含まない")
+    @Test("セットの day の半開区間 [from, to) で、completed_at が無いセットは含まない。並びは day・completed_at 順")
     func halfOpen() async throws {
         let bench = exercise("ベンチプレス")
         let inside = set(bench, 1, at: jstDate("2026-09-28T00:00:00"))
+        // 日曜 (10/4) に 0:30 (月曜の時刻) に記録したセットは日曜の週に入る。月曜 0:00 の日のセットは入らない
+        let sundayLate = set(bench, 4, at: jstDate("2026-10-05T00:30:00"), day: jstDate("2026-10-04T00:00:00"))
         let source = MockWorkoutDataSource(exercises: [bench], sets: [
-            inside, set(bench, 2, at: jstDate("2026-10-05T00:00:00")), set(bench, 3, at: nil),
+            sundayLate, inside, set(bench, 2, at: jstDate("2026-10-05T00:00:00")), set(bench, 3, at: nil),
+            set(bench, 5, at: jstDate("2026-09-27T23:59:00")),
         ])
-        let fetched = try await source.fetchSets(completedFrom: jstDate("2026-09-28T00:00:00"), to: jstDate("2026-10-05T00:00:00"))
-        #expect(fetched.map(\.id) == [inside.id])
+        let fetched = try await source.fetchSets(daysFrom: jstDate("2026-09-28T00:00:00"), to: jstDate("2026-10-05T00:00:00"))
+        #expect(fetched.map(\.id) == [inside.id, sundayLate.id])
     }
 }
 
@@ -78,6 +83,33 @@ struct WorkoutHistoryStoreTests {
         #expect(store.sets(on: jstDate("2026-09-30T12:00:00")).map(\.id) == [early.id])
         #expect(store.recordedDays == Set(["2026-09-29", "2026-09-30", "2026-10-01"].map { jstDate("\($0)T00:00:00") }))
         #expect(store.sets(inWeekStarting: monday).count == 3)
+    }
+
+    @Test("月曜 0:30 に日曜へ記録したセットは日曜の週・日曜の sets(on:)・日曜の点 (付録 B-5)")
+    func lateSundaySetBelongsToSunday() async {
+        let sunday = jstDate("2026-10-04T00:00:00")
+        let nextMonday = jstDate("2026-10-05T00:00:00")
+        let late = set(bench, 1, at: jstDate("2026-10-05T00:30:00"), session: UUID(), day: sunday)
+        let mondaySet = set(bench, 1, at: jstDate("2026-10-05T19:00:00"), session: UUID())
+        let source = MockWorkoutDataSource(exercises: [bench], sets: [late, mondaySet])
+        let store = WorkoutHistoryStore(dataSource: source, calendar: jst)
+        await store.ensureLoaded(weekStarts: [monday, nextMonday])
+        #expect(store.sets(inWeekStarting: monday).map(\.id) == [late.id])
+        #expect(store.sets(inWeekStarting: nextMonday).map(\.id) == [mondaySet.id])
+        #expect(store.sets(on: sunday).map(\.id) == [late.id])
+        #expect(store.sets(on: nextMonday).map(\.id) == [mondaySet.id])
+        #expect(store.recordedDays == [sunday, nextMonday])
+        #expect(store.entries(on: sunday).map(\.id) == [late.entryId])
+    }
+
+    @Test("日曜の週だけを読んでも、月曜 0:30 に日曜へ記録したセットは日曜の週に入る (取りこぼさない)")
+    func lateSundaySetLoadedWithSundayWeek() async {
+        let sunday = jstDate("2026-10-04T00:00:00")
+        let late = set(bench, 1, at: jstDate("2026-10-05T00:30:00"), session: UUID(), day: sunday)
+        let source = MockWorkoutDataSource(exercises: [bench], sets: [late])
+        let store = WorkoutHistoryStore(dataSource: source, calendar: jst)
+        await store.ensureLoaded(weekStarts: [monday])
+        #expect(store.sets(on: sunday).map(\.id) == [late.id])
     }
 
     @Test("invalidate 後は再フェッチする")

@@ -38,7 +38,8 @@ struct AnalysisView: View {
         let week: Date
     }
 
-    private var today: Date { WorkoutSummary.dayKey(Date(), calendar: calendar) }
+    /// 記録の store の今日 (トレーニングのタブの時計。-mock-now でずらせる)
+    private var today: Date { store.today }
 
     var body: some View {
         // 修飾子は中身が透過しない VStack に付ける (Group に付けると switch の各ページに配られ、

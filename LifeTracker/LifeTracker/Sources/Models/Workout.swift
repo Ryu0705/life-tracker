@@ -69,6 +69,8 @@ struct RoutineExercise: Codable, Hashable {
     let targetWeight: Double?
 }
 
+/// day = トレーニングの日 (週の帯で選んでいた日。migration 0015)。started_at の日とは限らない
+/// (前の日に 0:30 に始めた場合)。1 人 1 日 1 つ (UNIQUE (user_id, day))
 struct WorkoutSession: Codable, Identifiable, Hashable {
     let id: UUID
     let actualTaskId: UUID?
@@ -76,8 +78,39 @@ struct WorkoutSession: Codable, Identifiable, Hashable {
     let startedAt: Date
     let endedAt: Date?
     let note: String?
+    /// DATE (JST 0 時)。started_at はこの日の 0:00〜翌日 2:00 (0015 の CHECK)
+    let day: Date
 
     var isInProgress: Bool { endedAt == nil }
+}
+
+// MARK: - Codable (day は DATE。ActualTask と同じく手で読む。extension に書いて memberwise の init を残す)
+extension WorkoutSession {
+    private enum CodingKeys: String, CodingKey {
+        case id, actualTaskId, routineId, startedAt, endedAt, note, day
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        actualTaskId = try c.decodeIfPresent(UUID.self, forKey: .actualTaskId)
+        routineId = try c.decodeIfPresent(UUID.self, forKey: .routineId)
+        startedAt = try c.decode(Date.self, forKey: .startedAt)
+        endedAt = try c.decodeIfPresent(Date.self, forKey: .endedAt)
+        note = try c.decodeIfPresent(String.self, forKey: .note)
+        day = try c.decode(DateOnly.self, forKey: .day).wrappedValue
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(actualTaskId, forKey: .actualTaskId)
+        try c.encode(routineId, forKey: .routineId)
+        try c.encode(startedAt, forKey: .startedAt)
+        try c.encode(endedAt, forKey: .endedAt)
+        try c.encode(note, forKey: .note)
+        try c.encode(DateOnly(wrappedValue: day), forKey: .day)
+    }
 }
 
 /// その日 (セッション) に実施した種目 1 回分 = 記録画面のカード (migration 0010)。同じ種目を 2 回やれば 2 行。
@@ -107,6 +140,50 @@ struct WorkoutSet: Codable, Identifiable, Hashable {
     let rpe: Double?
     let isWarmup: Bool
     let completedAt: Date?
+    /// トレーニングの日 = そのセッションの day (DB の外部キー (session_id, user_id, day) で一致)。
+    /// completed_at の日とは限らない (前の日に 0:30 に記録したセットは前の日)
+    let day: Date
+}
+
+// MARK: - Codable (day は DATE。WorkoutSession と同じ形)
+extension WorkoutSet {
+    private enum CodingKeys: String, CodingKey {
+        case id, sessionId, exerciseId, entryId, setIndex, weight, reps, durationSec, distanceM, rpe, isWarmup, completedAt, day
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        sessionId = try c.decode(UUID.self, forKey: .sessionId)
+        exerciseId = try c.decode(UUID.self, forKey: .exerciseId)
+        entryId = try c.decode(UUID.self, forKey: .entryId)
+        setIndex = try c.decode(Int.self, forKey: .setIndex)
+        weight = try c.decodeIfPresent(Double.self, forKey: .weight)
+        reps = try c.decodeIfPresent(Int.self, forKey: .reps)
+        durationSec = try c.decodeIfPresent(Int.self, forKey: .durationSec)
+        distanceM = try c.decodeIfPresent(Double.self, forKey: .distanceM)
+        rpe = try c.decodeIfPresent(Double.self, forKey: .rpe)
+        isWarmup = try c.decode(Bool.self, forKey: .isWarmup)
+        completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
+        day = try c.decode(DateOnly.self, forKey: .day).wrappedValue
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(sessionId, forKey: .sessionId)
+        try c.encode(exerciseId, forKey: .exerciseId)
+        try c.encode(entryId, forKey: .entryId)
+        try c.encode(setIndex, forKey: .setIndex)
+        try c.encode(weight, forKey: .weight)
+        try c.encode(reps, forKey: .reps)
+        try c.encode(durationSec, forKey: .durationSec)
+        try c.encode(distanceM, forKey: .distanceM)
+        try c.encode(rpe, forKey: .rpe)
+        try c.encode(isWarmup, forKey: .isWarmup)
+        try c.encode(completedAt, forKey: .completedAt)
+        try c.encode(DateOnly(wrappedValue: day), forKey: .day)
+    }
 }
 
 extension WorkoutSet {
@@ -114,13 +191,13 @@ extension WorkoutSet {
     func with(setIndex: Int) -> WorkoutSet {
         WorkoutSet(id: id, sessionId: sessionId, exerciseId: exerciseId, entryId: entryId, setIndex: setIndex,
                    weight: weight, reps: reps, durationSec: durationSec, distanceM: distanceM,
-                   rpe: rpe, isWarmup: isWarmup, completedAt: completedAt)
+                   rpe: rpe, isWarmup: isWarmup, completedAt: completedAt, day: day)
     }
 
-    /// 編集後の値。completed_at・set_index はそのまま
+    /// 編集後の値。completed_at・set_index・day はそのまま
     func with(values: WorkoutSetInput.Validated) -> WorkoutSet {
         WorkoutSet(id: id, sessionId: sessionId, exerciseId: exerciseId, entryId: entryId, setIndex: setIndex,
                    weight: values.weight, reps: values.reps, durationSec: values.durationSec, distanceM: values.distanceM,
-                   rpe: rpe, isWarmup: values.isWarmup, completedAt: completedAt)
+                   rpe: rpe, isWarmup: values.isWarmup, completedAt: completedAt, day: day)
     }
 }

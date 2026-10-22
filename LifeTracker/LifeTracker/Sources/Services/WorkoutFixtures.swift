@@ -66,9 +66,11 @@ enum WorkoutFixtures {
         var sessions: [WorkoutSession] = []
         var sets: [WorkoutSet] = []
         for entry in history {
-            let start = calendar.date(byAdding: .day, value: -entry.daysAgo, to: today)!.addingTimeInterval(7 * 3600)
+            // トレーニングの日 = その日 (JST)。7:00 に始めるので started_at の日と同じ
+            let day = calendar.date(byAdding: .day, value: -entry.daysAgo, to: today)!
+            let start = day.addingTimeInterval(7 * 3600)
             let session = WorkoutSession(id: UUID(), actualTaskId: nil, routineId: nil,
-                                         startedAt: start, endedAt: start.addingTimeInterval(3600), note: nil)
+                                         startedAt: start, endedAt: start.addingTimeInterval(3600), note: nil, day: day)
             sessions.append(session)
             var at = start
             for (exercise, rows) in entry.entries {
@@ -78,7 +80,7 @@ enum WorkoutFixtures {
                     let distance = exercise.metricKind == .durationDistance ? row.sec.map { Double($0) * 3 } : nil
                     sets.append(WorkoutSet(id: UUID(), sessionId: session.id, exerciseId: exercise.id, entryId: entryId, setIndex: index + 1,
                                            weight: row.weight, reps: row.reps, durationSec: row.sec, distanceM: distance,
-                                           rpe: nil, isWarmup: false, completedAt: at))
+                                           rpe: nil, isWarmup: false, completedAt: at, day: day))
                     at = at.addingTimeInterval(180)
                 }
             }

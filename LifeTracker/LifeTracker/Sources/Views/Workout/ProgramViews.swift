@@ -171,9 +171,10 @@ struct ProgramDraft: Identifiable {
         ProgramDraft(programId: program.id, name: program.name, exerciseIds: program.exerciseIds, title: "プログラムを編集")
     }
 
-    /// 今日の種目で上書き: 名前はそのまま、種目の並びを今日のものにした編集画面。保存で確定する
-    static func overwrite(_ program: WorkoutProgram, with exerciseIds: [UUID]) -> ProgramDraft {
-        ProgramDraft(programId: program.id, name: program.name, exerciseIds: exerciseIds, title: "今日の種目で上書き")
+    /// 今日の種目で上書き: 名前はそのまま、種目の並びを今日のものにした編集画面。保存で確定する。
+    /// dayWord は日の呼び方 (前の日を開いているときは「この日」。WorkoutSummary.dayWord)
+    static func overwrite(_ program: WorkoutProgram, with exerciseIds: [UUID], dayWord: String = "今日") -> ProgramDraft {
+        ProgramDraft(programId: program.id, name: program.name, exerciseIds: exerciseIds, title: "\(dayWord)の種目で上書き")
     }
 }
 
@@ -381,10 +382,13 @@ struct ProgramEditView: View {
 
 /// 記録画面の左上「プログラム」: 作成・一覧 (管理) と、今日の種目の保存・上書き。
 /// 同じ並びのプログラムがあれば保存は押せず、上書き先も同じ並びのものは押せない。今日が空なら両方押せない (D-1)。
-/// 今日の種目は画面順・同じ種目は枚数ぶん (記録画面で並べ替えてから上書きすると、実施した順がプログラムに残る)
+/// 今日の種目は画面順・同じ種目は枚数ぶん (記録画面で並べ替えてから上書きすると、実施した順がプログラムに残る)。
+/// 前の日を開いているときは、その日の種目を「この日の種目」と呼ぶ (dayWord。WorkoutSummary.dayWord)
 struct TodayProgramMenu: View {
     @ObservedObject var programStore: ProgramStore
     let todayIds: [UUID]
+    /// 日の呼び方 (「今日」/「この日」)
+    let dayWord: String
     let onNew: () -> Void
     let onList: () -> Void
     let onSaveToday: ([UUID]) -> Void
@@ -395,17 +399,17 @@ struct TodayProgramMenu: View {
         Menu {
             Button("新しいプログラムを作成", systemImage: "plus", action: onNew)
             Button("プログラム一覧", systemImage: "list.bullet", action: onList)
-            Section("今日の種目（\(Set(todayIds).count)種目）") {
+            Section("\(dayWord)の種目（\(Set(todayIds).count)種目）") {
                 Button {
                     onSaveToday(todayIds)
                 } label: {
-                    Label("今日の種目を新しいプログラムに保存", systemImage: "square.and.arrow.down")
+                    Label("\(dayWord)の種目を新しいプログラムに保存", systemImage: "square.and.arrow.down")
                     if let same { Text("「\(same.name)」と同じ内容です") }
                 }
                 .disabled(todayIds.isEmpty || same != nil)
                 // メニューの入れ子には .disabled が効かないため、押せないときは押せないボタンとして出す
                 if todayIds.isEmpty || programStore.programs.isEmpty {
-                    Button("今日の種目で上書き", systemImage: "arrow.triangle.2.circlepath") {}
+                    Button("\(dayWord)の種目で上書き", systemImage: "arrow.triangle.2.circlepath") {}
                         .disabled(true)
                 } else {
                     Menu {
@@ -414,12 +418,12 @@ struct TodayProgramMenu: View {
                                 onOverwrite(program, todayIds)
                             } label: {
                                 Text(program.name)
-                                if program.exerciseIds == todayIds { Text("今日と同じ内容です") }
+                                if program.exerciseIds == todayIds { Text("\(dayWord)と同じ内容です") }
                             }
                             .disabled(program.exerciseIds == todayIds)
                         }
                     } label: {
-                        Label("今日の種目で上書き", systemImage: "arrow.triangle.2.circlepath")
+                        Label("\(dayWord)の種目で上書き", systemImage: "arrow.triangle.2.circlepath")
                     }
                 }
             }

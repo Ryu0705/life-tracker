@@ -118,22 +118,34 @@ final class SupabaseWorkoutDataSource: WorkoutDataSource {
         }
     }
 
-    func fetchInProgressSession() async throws -> WorkoutSession? {
-        try await access.run {
-            let sessions: [WorkoutSession] = try await client.from("workout_session")
+    /// 日の値は DateOnly の文字列 (JST の yyyy-MM-dd。SupabaseDayDataSource の .in("date", values:) と同じ書き方)
+    func fetchSessions(days: [Date]) async throws -> [WorkoutSession] {
+        guard !days.isEmpty else { return [] }
+        return try await access.run {
+            try await client.from("workout_session")
                 .select()
-                .is("ended_at", value: nil)
-                .limit(1)
+                .in("day", values: days.map { DateOnly.formatter.string(from: $0) })
+                .order("day")
                 .execute()
                 .value
-            return sessions.first
         }
     }
 
-    func startSession(routineId: UUID?, startedAt: Date) async throws -> WorkoutSession {
+    func fetchOpenSessions() async throws -> [WorkoutSession] {
         try await access.run {
             try await client.from("workout_session")
-                .insert(NewWorkoutSession(routineId: routineId, startedAt: startedAt))
+                .select()
+                .is("ended_at", value: nil)
+                .order("day")
+                .execute()
+                .value
+        }
+    }
+
+    func startSession(day: Date, routineId: UUID?, startedAt: Date) async throws -> WorkoutSession {
+        try await access.run {
+            try await client.from("workout_session")
+                .insert(NewWorkoutSession(routineId: routineId, startedAt: startedAt, day: day))
                 .select()
                 .single()
                 .execute()
@@ -284,13 +296,15 @@ final class SupabaseWorkoutDataSource: WorkoutDataSource {
         }
     }
 
-    func fetchSets(completedFrom from: Date, to: Date) async throws -> [WorkoutSet] {
+    func fetchSets(daysFrom from: Date, to: Date) async throws -> [WorkoutSet] {
         try await access.run {
             try await fetchAllPages {
                 client.from("workout_set")
                     .select()
-                    .gte("completed_at", value: Self.iso(from))
-                    .lt("completed_at", value: Self.iso(to))
+                    .gte("day", value: DateOnly.formatter.string(from: from))
+                    .lt("day", value: DateOnly.formatter.string(from: to))
+                    .not("completed_at", operator: .is, value: "null")
+                    .order("day")
                     .order("completed_at")
                     .order("set_index")
                     .order("id")
@@ -378,12 +392,6 @@ final class SupabaseWorkoutDataSource: WorkoutDataSource {
             offset += pageSize
         }
     }
-
-    private static func iso(_ date: Date) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: date)
-    }
 }
 
 private struct TrainingDayRow: Decodable {
@@ -406,9 +414,11 @@ private struct ExerciseIdRow: Decodable {
     let exerciseId: UUID
 }
 
+/// day を送る (送らなければトリガーが started_at の JST の日で埋める = 前の日に 0:30 に始めると今日になってしまう)
 private struct NewWorkoutSession: Encodable {
     let routineId: UUID?
     let startedAt: Date
+    @DateOnly var day: Date
 }
 
 private struct NewWorkoutEntry: Encodable {

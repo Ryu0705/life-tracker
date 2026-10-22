@@ -16,9 +16,13 @@ protocol WorkoutDataSource {
     /// 論理削除 (workout_session.routine_id の参照を残す)
     func archiveRoutine(id: UUID) async throws
 
-    /// 進行中 (ended_at IS NULL) のセッション。DB の部分 UNIQUE で同時 1 件まで
-    func fetchInProgressSession() async throws -> WorkoutSession?
-    func startSession(routineId: UUID?, startedAt: Date) async throws -> WorkoutSession
+    /// その日 (トレーニングの日) のセッション。終わったものも返す。1 人 1 日 1 つ (UNIQUE (user_id, day))
+    func fetchSessions(days: [Date]) async throws -> [WorkoutSession]
+    /// 開いたまま (ended_at IS NULL) のセッション (片付け用)。前の日と今日が同時に開きうるので複数返る
+    func fetchOpenSessions() async throws -> [WorkoutSession]
+    /// その日のセッションを作る。同じ日が既にあれば失敗する (UNIQUE (user_id, day) = 23505)。
+    /// startedAt はその日の 0:00〜翌日 2:00 (0015 の CHECK)
+    func startSession(day: Date, routineId: UUID?, startedAt: Date) async throws -> WorkoutSession
     func endSession(id: UUID, endedAt: Date) async throws
     /// セットが 1 件もないセッションを破棄する用途。workout_set は ON DELETE CASCADE
     func deleteSession(id: UUID) async throws
@@ -47,11 +51,11 @@ protocol WorkoutDataSource {
     func fetchExerciseSets(exerciseId: UUID) async throws -> [WorkoutSet]
     /// 1 回でも記録がある種目の id (推移一覧用)
     func fetchRecordedExerciseIds() async throws -> Set<UUID>
-    /// 期間内 (completed_at の半開区間 [from, to)) の全種目のセット。completed_at IS NULL は含まない。
-    /// 1 リクエスト上限 (PostgREST max-rows 1000) を越えないよう実装側でページングする
-    func fetchSets(completedFrom from: Date, to: Date) async throws -> [WorkoutSet]
+    /// 期間内 (セットの day の半開区間 [from, to)) の全種目のセット。completed_at IS NULL は含まない。
+    /// 並びは day, completed_at, set_index, id。1 リクエスト上限 (PostgREST max-rows 1000) を越えないよう実装側でページングする
+    func fetchSets(daysFrom from: Date, to: Date) async throws -> [WorkoutSet]
 
-    /// トレーニングした日 (completed_at の JST 暦日) の全期間。連続週数の計算用 (view workout_training_day)
+    /// トレーニングした日 (セットの day) の全期間。連続週数の計算用 (view workout_training_day。0015 で set.day に)
     func fetchTrainingDays() async throws -> Set<Date>
     /// 週の目標回数の履歴 (effective_from 順)
     func fetchWeeklyGoals() async throws -> [WeeklyGoal]
@@ -80,6 +84,8 @@ struct NewWorkoutSet: Encodable, Hashable {
     let distanceM: Double?
     let isWarmup: Bool
     let completedAt: Date
+    /// セッションの day と同じ値 (外部キー (session_id, user_id, day))。completedAt はこの日の 0:00〜翌日 2:00
+    @DateOnly var day: Date
 }
 
 /// 入力画面の生値。metric_kind に応じて必要な列だけを残す (DB CHECK で表現できない整合をモデル層で担保)

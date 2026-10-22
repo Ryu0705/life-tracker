@@ -153,6 +153,49 @@ struct ContinuityTests {
         #expect(weeks.allSatisfy { loaded.union([weeks[0]]).contains($0) })
     }
 
+    @Test("トレーニングした日は DB の day と開いている日の記録の有無 (live) から: 月曜 0:30 に日曜へ記録した分は日曜の週の回数に入る (付録 B-5)")
+    @MainActor
+    func daysWithLiveOpenDays() async throws {
+        let bench = Exercise(id: UUID(), name: "ベンチプレス", muscleGroup: .chest, equipment: nil, metricKind: .weightReps,
+                             note: nil, isArchived: false, sortOrder: nil)
+        // 木曜 (10/1) と、日曜 (10/4) に月曜 0:30 に記録したセット
+        let thursday = WorkoutSet(id: UUID(), sessionId: UUID(), exerciseId: bench.id, entryId: UUID(), setIndex: 1, weight: 60, reps: 10,
+                                  durationSec: nil, distanceM: nil, rpe: nil, isWarmup: false, completedAt: day(10, 1, hour: 7), day: day(10, 1))
+        let lateSunday = WorkoutSet(id: UUID(), sessionId: UUID(), exerciseId: bench.id, entryId: UUID(), setIndex: 1, weight: 60, reps: 10,
+                                    durationSec: nil, distanceM: nil, rpe: nil, isWarmup: false,
+                                    completedAt: day(10, 5).addingTimeInterval(1800), day: day(10, 4))
+        let source = MockWorkoutDataSource(exercises: [bench], sets: [thursday, lateSunday])
+        try await source.saveWeeklyGoal(goal(2, from: day(9, 28)))
+        let store = ContinuityStore(dataSource: source, calendar: calendar)
+        await store.load()
+        #expect(store.trainingDays == [day(10, 1), day(10, 4)])
+
+        // 月曜 0:30: 開いている日は月曜 (記録なし) と日曜 (store に記録あり)
+        let mondayLate = day(10, 5).addingTimeInterval(1800)
+        let live = [day(10, 5): false, day(10, 4): true]
+        #expect(store.days(live: live) == [day(10, 1), day(10, 4)])
+        let status = try #require(store.status(today: mondayLate, live: live))
+        #expect(status.streakWeeks == 1, "前週 (9/28〜10/4) は木曜と日曜の 2 回で達成")
+        #expect(status.weekCount == 0, "今週 (10/5〜) にはまだ入らない")
+
+        // 開いている日曜の記録を全部取り消した (store が空) → DB に残っていても数えない
+        #expect(store.days(live: [day(10, 5): false, day(10, 4): false]) == [day(10, 1)])
+        // 今日 (月曜) に記録した → 月曜を足す (日曜は閉じて live から外れ、DB の分で数える)
+        #expect(store.days(live: [day(10, 5): true]) == [day(10, 1), day(10, 4), day(10, 5)])
+    }
+
+    @Test("今週の目標は渡した今日の週で引く")
+    @MainActor
+    func currentTargetUsesGivenToday() async throws {
+        let source = MockWorkoutDataSource()
+        try await source.saveWeeklyGoal(goal(3, from: day(9, 28)))
+        try await source.saveWeeklyGoal(goal(4, from: day(10, 5)))
+        let store = ContinuityStore(dataSource: source, calendar: calendar)
+        await store.load()
+        #expect(store.currentTarget(today: day(10, 4, hour: 23)) == 3)
+        #expect(store.currentTarget(today: day(10, 5)) == 4)
+    }
+
     @Test("目標の保存は今週の週頭で、同じ週に変えたら上書き")
     @MainActor
     func saveGoalSameWeekOverwrites() async throws {

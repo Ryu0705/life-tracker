@@ -116,8 +116,9 @@ struct AnalysisContinuitySection: View {
     let calendar: Calendar
 
     var body: some View {
+        let live = WorkoutSummary.liveSets(openDays: store.openDays, setsOn: store.sets(on:))
         Section {
-            if let status = continuity.status(today: today, recordedToday: !store.sets.isEmpty) {
+            if let status = continuity.status(today: today, live: live.mapValues { !$0.isEmpty }) {
                 HStack(spacing: 10) {
                     StreakLabel(weeks: status.streakWeeks)
                     WeekRing(status: status, lineWidth: 3)
@@ -129,7 +130,7 @@ struct AnalysisContinuitySection: View {
             }
         }
         Section {
-            let volumes = heatmapVolumes
+            let volumes = heatmapVolumes(live: live)
             let thresholds = TrainingHeatmap.windowThresholds(volumes: volumes, today: today, calendar: calendar)
             // 色の基準の 26 週がそろうまで塗らない (40-integration.md §3-3)。1 か月で窓より前に戻ったときはその週も
             let windowLoaded = TrainingHeatmap.windowWeekStarts(today: today, calendar: calendar).allSatisfy { historyStore.isLoaded(weekStart: $0) }
@@ -168,10 +169,10 @@ struct AnalysisContinuitySection: View {
         Text("読み込み中…").foregroundStyle(.secondary)
     }
 
-    /// 日 → ボリューム。kg の出ない種目だけの日も「やった日」として最も薄い色で出す
-    private var heatmapVolumes: [Date: Double] {
-        let sets = WorkoutSummary.mergeToday(historySets: historyStore.loadedSets, todaySets: store.sets, today: today, calendar: calendar)
-        return Dictionary(grouping: sets.filter { $0.completedAt != nil }) { WorkoutSummary.dayKey($0.completedAt!, calendar: calendar) }
+    /// 日 (セットの day) → ボリューム。kg の出ない種目だけの日も「やった日」として最も薄い色で出す
+    private func heatmapVolumes(live: [Date: [WorkoutSet]]) -> [Date: Double] {
+        let sets = WorkoutSummary.mergeLive(history: historyStore.loadedSets, live: live)
+        return Dictionary(grouping: sets) { WorkoutSummary.dayKey($0.day, calendar: calendar) }
             .mapValues { max(WorkoutProgress.value(of: .volume, in: $0) ?? 0, .leastNonzeroMagnitude) }
     }
 }

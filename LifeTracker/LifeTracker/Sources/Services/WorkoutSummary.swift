@@ -1,7 +1,8 @@
 import Foundation
 
 /// トレーニングタブの日・週・組み合わせ・カード見出しの導出。pure (DB / Singleton に触れない)。
-/// 日の基準は completed_at の暦日 (WorkoutProgress.daily と同じ。session.started_at は日の判定に使わない)
+/// 日の基準はセットの day (トレーニングの日。0015。WorkoutProgress.daily と同じ)。
+/// completed_at は時刻の幅 (dayTotals・timeRangeText) にだけ使う (前の日に 0:20 まで記録すると「23:30–0:20 · 50分」)
 enum WorkoutSummary {
     /// 週は月曜始まり (Gymwork に合わせる)。端末ロケール (ja_JP は日曜始まり) と calendar.firstWeekday に依存しない
     static let firstWeekday = 2
@@ -75,14 +76,21 @@ enum WorkoutSummary {
         dayKey(day, calendar: calendar) <= dayKey(today, calendar: calendar)
     }
 
+    /// 記録がある日 (completed のセットの day)
     static func recordedDays(_ sets: [WorkoutSet], calendar: Calendar) -> Set<Date> {
-        Set(sets.compactMap(\.completedAt).map { dayKey($0, calendar: calendar) })
+        Set(sets.filter { $0.completedAt != nil }.map { dayKey($0.day, calendar: calendar) })
     }
 
-    /// 履歴の今日の分を今日の store のセットに差し替える (合計バー・週帯・分析の数字を一致させる)
-    static func mergeToday(historySets: [WorkoutSet], todaySets: [WorkoutSet], today: Date, calendar: Calendar) -> [WorkoutSet] {
-        let todayKey = dayKey(today, calendar: calendar)
-        return historySets.filter { $0.completedAt.map { dayKey($0, calendar: calendar) != todayKey } ?? false } + todaySets
+    /// 履歴の開いている日 (live のキー) の分を store のセットに差し替える (合計バー・週帯・分析の数字を一致させる)。
+    /// live = 開いている日 (日の始まり。set.day と同じ JST の 0 時) → その日の store のセット。
+    /// セットの無い開いている日は、履歴の分も消える (開いている日は store が正)
+    static func mergeLive(history: [WorkoutSet], live: [Date: [WorkoutSet]]) -> [WorkoutSet] {
+        history.filter { $0.completedAt != nil && live[$0.day] == nil } + live.keys.sorted().flatMap { live[$0] ?? [] }
+    }
+
+    /// 開いている日 → その日の store のセット (mergeLive と継続の live に渡す)。setsOn は store.sets(on:)
+    static func liveSets(openDays: [Date], setsOn: (Date) -> [WorkoutSet]) -> [Date: [WorkoutSet]] {
+        Dictionary(openDays.map { ($0, setsOn($0)) }, uniquingKeysWith: { first, _ in first })
     }
 
     /// 部位は exercise.muscleGroup (1 種目 1 部位)。種目マスタに無い (アーカイブ済み) 種目は部位別に出さない。
@@ -92,9 +100,12 @@ enum WorkoutSummary {
         let interval = weekInterval(containing: week, calendar: calendar)
         let end = through.flatMap { calendar.date(byAdding: .day, value: 1, to: dayKey($0, calendar: calendar)) }
             .map { min($0, interval.end) } ?? interval.end
-        let inWeek = sets.filter { $0.completedAt.map { interval.start <= $0 && $0 < end } ?? false }
+        let inWeek = sets.filter { set in
+            let day = dayKey(set.day, calendar: calendar)
+            return set.completedAt != nil && interval.start <= day && day < end
+        }
         let known = inWeek.compactMap { set in exercisesById[set.exerciseId].map { (set, $0.muscleGroup) } }
-        let byDay = Dictionary(grouping: known) { DayMuscleKey(day: dayKey($0.0.completedAt!, calendar: calendar), muscle: $0.1) }
+        let byDay = Dictionary(grouping: known) { DayMuscleKey(day: dayKey($0.0.day, calendar: calendar), muscle: $0.1) }
         let byDayMuscle = byDay
             .map { key, entries in WeekTotals.DayMuscle(day: key.day, muscle: key.muscle, volume: WorkoutProgress.value(of: .volume, in: entries.map(\.0)) ?? 0) }
             .sorted { ($0.day, muscleOrder($0.muscle)) < ($1.day, muscleOrder($1.muscle)) }
@@ -115,13 +126,13 @@ enum WorkoutSummary {
         return Int(((current - previous) / previous * 100).rounded())
     }
 
-    /// 種目ごとの「今日より前で最も新しい日」のセット (プログラムの確認シートの前回表示)。
-    /// 読み込み済みの期間 (履歴 store の先読み分) の中だけで探す
-    static func latestDaySets(_ sets: [WorkoutSet], today: Date, calendar: Calendar) -> [UUID: [WorkoutSet]] {
-        let todayKey = dayKey(today, calendar: calendar)
+    /// 種目ごとの「その日より前で最も新しい日」のセット (プログラムの確認シートの前回表示。その日 = 表示している日)。
+    /// 読み込み済みの期間 (履歴 store の先読み分と開いている日) の中だけで探す
+    static func latestDaySets(_ sets: [WorkoutSet], before day: Date, calendar: Calendar) -> [UUID: [WorkoutSet]] {
+        let dayStart = dayKey(day, calendar: calendar)
         var result: [UUID: [WorkoutSet]] = [:]
         for (exerciseId, entries) in Dictionary(grouping: sets.filter { $0.completedAt != nil }, by: \.exerciseId) {
-            if let latest = WorkoutProgress.daily(entries, calendar: calendar).first(where: { $0.day < todayKey }) {
+            if let latest = WorkoutProgress.daily(entries, calendar: calendar).first(where: { $0.day < dayStart }) {
                 result[exerciseId] = latest.sets
             }
         }
@@ -136,14 +147,21 @@ enum WorkoutSummary {
             .joined(separator: " ｜ ")
     }
 
-    /// カード見出しのサブ行。weight_reps は「今日 1,105kg · e1RM 69kg（前回 67.5kg）」、今日の本番が無ければ「前回 e1RM 67.5kg」
-    static func cardHeadline(kind: MetricKind, todaySets: [WorkoutSet], previousSets: [WorkoutSet]) -> String? {
+    /// カード見出しのサブ行。weight_reps は「今日 1,105kg · e1RM 69kg（前回 67.5kg）」、今日の本番が無ければ「前回 e1RM 67.5kg」。
+    /// dayWord は日の呼び方 (前の日を開いているときは「この日」。dayWord(activeDay:today:))
+    static func cardHeadline(kind: MetricKind, todaySets: [WorkoutSet], previousSets: [WorkoutSet], dayWord: String = "今日") -> String? {
         let metric = headlineMetric(kind: kind, sets: todaySets + previousSets)
         let previous = WorkoutProgress.value(of: metric, in: previousSets).map(metric.format)
         if let today = setsSummary(kind: kind, sets: todaySets, metric: metric) {
-            return "今日 \(today)" + (previous.map { "（前回 \($0)）" } ?? "")
+            return "\(dayWord) \(today)" + (previous.map { "（前回 \($0)）" } ?? "")
         }
         return previous.map { "前回 \(shortLabel(metric)) \($0)" }
+    }
+
+    /// 記録画面の日の呼び方: 書く日 (activeDay) が今日なら「今日」、前の日を開いているときは「この日」
+    /// (カードの見出し・カードのメニュー・プログラムのメニュー。上の帯の日付と「今日へ」は変えない)
+    static func dayWord(activeDay: Date, today: Date) -> String {
+        activeDay == today ? "今日" : "この日"
     }
 
     /// 過去日のカード用: 「1,105kg · e1RM 69kg」/「最多 12回」
