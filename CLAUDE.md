@@ -32,6 +32,11 @@ B/C 級 (局所修正) は並列 Wave で可。同一ファイルの編集は直
 - インストール: `xcrun simctl install booted <app>` (idb は arch 判定バグありのため install には使わない)
 - UI 操作確認: idb は `screen` / `describe` / `tap` のみ使用可。詳細は memory `feedback_ios_app_verification_idb.md`
 
+## 本番の migration（MCP apply_migration）
+- 流す前に本番のバックアップ（本人の `pg_dump`）と、それを docker に戻したリハーサル（`supabase/test/run.sh --dump`）。流す直前に本人へ「確認の画面をすぐ承認」と伝える
+- 確認の画面の承認が遅れると「Invalid or expired requestState」で返る。何も流れていない（1 つのトランザクション）ので、読むだけの SQL で記録・列が無いことを確かめてから流し直す（2026-10-23 0014 で実測）
+- 流した後、本番に記録された SQL がファイルと同じかを md5 で確かめる: `SELECT md5(array_to_string(statements, '')) FROM supabase_migrations.schema_migrations WHERE name = '<名前>'` とファイルの `md5 -q`（1 回の呼び出しは 1 つの文で、そのまま記録される。UID を置き換えたファイルなら置き換えた後のもの）。手で写して渡すので、写し間違いをこれで見る（2026-10-23 0013・0014 で一致）
+
 ## SourceKit 診断エラー
 Agent 実装直後の "Cannot find type/module in scope" は xcodebuild が通っていれば無視可 (IDE インデックスの一時エラー)。
 

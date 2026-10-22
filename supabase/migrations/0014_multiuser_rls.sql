@@ -1,7 +1,7 @@
 -- Life Tracker v2 — 人ごとのデータ (user_id) と RLS・権限
 -- 2026-10-19 / 設計: docs/auth-multiuser-design.md (§1〜§6)・計画: docs/auth-multiuser-implementation-plan.md §1-3 (細部はこちらが正)
 -- 適用方法: Supabase MCP apply_migration (name: v2_multiuser_rls) / supabase-cli は使わない
--- 本番適用: 未 (段階 3 で本人 OK の後。0013 の後・本番のバックアップの後・新しいビルドを実機に入れた後)
+-- 本番適用: 済 (2026-10-23 00:43 JST・段階 3・本人 OK。MCP apply_migration v2_multiuser_rls・version 20261022154341。本番に記録された SQL はこのファイルの UID を置き換えたものと md5 が一致)
 --
 -- '__OWNER_UID__' は流すときに本人の UID に置き換える (UID は公開の repo に書かない。置き換え忘れは下の DO と ::uuid で止まる)
 -- 1 つのトランザクションで流れる (apply_migration は 1 回の SQL を 1 つのトランザクションにする。2026-10-19 probe_txn で確かめた)。

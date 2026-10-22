@@ -1,7 +1,7 @@
 -- Life Tracker v2 — task_template の旧列と pattern_template_membership を消す (0006 で予告した後始末)
 -- 2026-10-19 / 計画: docs/auth-multiuser-implementation-plan.md §1-2。0014 (人ごとのデータ・RLS) の前に流す
 -- 適用方法: Supabase MCP apply_migration (name: v2_drop_legacy_template) / supabase-cli は使わない
--- 本番適用: 未 (段階 3 で本人 OK の後。本番のバックアップの後)
+-- 本番適用: 済 (2026-10-23 00:27 JST・段階 3・本人 OK。MCP apply_migration v2_drop_legacy_template・version 20261022152744。本番に記録された SQL はこのファイルと md5 が一致)
 --
 -- 0006 の注記「task_template は系列の id を保つためだけの表になる」に合わせる。中身は task_template_version、
 -- 祝日に出すかは pattern_version_membership が持ち、アプリ (0006 以降のビルド) は旧列も旧表も読まない。
