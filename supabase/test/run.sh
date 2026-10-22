@@ -7,6 +7,7 @@
 #   supabase/test/run.sh --rollback [N]     N の前まで → 形の写し → N → rollback/N_down.sql → 形の写し → 差分が 0（N の既定は 0014）
 #   supabase/test/run.sh --dump <file>      本番の写し（pg_dump -Fc）を stub の上に戻し、--from（既定 0013）から流す（リハーサル）
 #                                           --from が 0013 なら「0013 の前の全部 = 0014 の後の本人」、それより後なら「流す前と後で表ごとの行数が同じ」を見る
+#   --grow <表>=<N>                         --dump の行数の照合で、その表は流した後が N 行多い（行を足す migration。くり返し指定できる。例: --grow exercise=1）
 #   --owner <uuid>                          '__OWNER_UID__' をこの UID にし、auth.users に入れる（本番の写しのリハーサル用。UID は repo に書かない）
 #   --keep                                  終わっても container を残す（docker exec -it lt-pgtest psql -U postgres で見る）
 #
@@ -19,7 +20,7 @@ IMAGE=lt-pg17-check
 NAME=lt-pgtest
 OWNER=00000000-0000-4000-8000-00000000000a
 
-UPTO=""; FROM=""; DUMP=""; ROLLBACK=""; KEEP=0
+UPTO=""; FROM=""; DUMP=""; ROLLBACK=""; KEEP=0; GROW=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --upto) UPTO="$2"; shift 2 ;;
@@ -27,6 +28,7 @@ while [ $# -gt 0 ]; do
     --dump) DUMP="$2"; shift 2 ;;
     --rollback)
       if [[ "${2:-}" =~ ^[0-9]{4}$ ]]; then ROLLBACK="$2"; shift 2; else ROLLBACK=0014; shift; fi ;;
+    --grow) GROW="$GROW $2"; shift 2 ;;
     --owner) OWNER="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -108,6 +110,8 @@ for f in $MIGRATIONS; do
     schema_dump > "$TMPD/before.txt"
   fi
   psql_file "migrations/$f"
+  # 0014 の直後の行数 (後の migration が行を足しても照合がずれないように、ここで取る)
+  if [ "$n" = "0014" ] && [ -f "$TMPD/counts-before.txt" ]; then counts > "$TMPD/counts-after.txt"; fi
   if [ -n "$UPTO" ] && [ "$n" = "$UPTO" ]; then echo "== --upto $UPTO で止めた"; exit 0; fi
   if [ -n "$ROLLBACK" ] && [ "$n" = "$ROLLBACK" ]; then
     psql_file "rollback/${n}_down.sql"
@@ -118,19 +122,21 @@ for f in $MIGRATIONS; do
 done
 if [ -n "$ROLLBACK" ]; then echo "== --rollback $ROLLBACK: migrations/${ROLLBACK}_*.sql が無い" >&2; exit 1; fi
 
-# 0014 より後から流したリハーサル: 表ごとの行数が流す前と同じ (列を足すだけの migration で行が増減していない)
+# 0014 より後から流したリハーサル: 表ごとの行数が流す前と同じ (列を足すだけの migration で行が増減していない)。--grow の表は N 行多い
 if [ -f "$TMPD/counts-same-before.txt" ]; then
   echo "== 行数の照合 (流す前 = 流した後)"
   counts > "$TMPD/counts-same-after.txt"
-  python3 -I - "$TMPD/counts-same-before.txt" "$TMPD/counts-same-after.txt" <<'PY'
+  python3 -I - "$TMPD/counts-same-before.txt" "$TMPD/counts-same-after.txt" $GROW <<'PY'
 import sys
 before = {l.split('|')[0]: l.split('|')[1] for l in open(sys.argv[1]).read().split() if l}
 after = {l.split('|')[0]: l.split('|')[1] for l in open(sys.argv[2]).read().split() if l}
+grow = {k: int(v) for k, v in (a.split('=') for a in sys.argv[3:])}
 bad = []
 for t in sorted(set(before) | set(after)):
-    line = f"{t}: before {before.get(t, '-')} / after {after.get(t, '-')}"
+    want = str(int(before[t]) + grow[t]) if t in grow and t in before else before.get(t)
+    line = f"{t}: before {before.get(t, '-')} / after {after.get(t, '-')}" + (f" (+{grow[t]})" if t in grow else "")
     print(line)
-    if before.get(t) != after.get(t):
+    if after.get(t) != want:
         bad.append(t)
 if bad:
     print("== 行数が合わない: " + ", ".join(bad), file=sys.stderr)
@@ -141,7 +147,6 @@ fi
 # 付け替えの前後の行数: 0013 の前の全部の行 = 0014 の後の本人の行 (exercise と、0013 で消した表を除く)
 if [ -f "$TMPD/counts-before.txt" ]; then
   echo "== 行数の照合 (0013 の前の全部 = 0014 の後の本人)"
-  counts > "$TMPD/counts-after.txt"
   python3 -I - "$TMPD/counts-before.txt" "$TMPD/counts-after.txt" <<'PY'
 import sys
 before = {l.split('|')[0]: l.split('|') for l in open(sys.argv[1]).read().split() if l}
