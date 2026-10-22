@@ -1,7 +1,7 @@
 -- Life Tracker v2 — トレーニングの日 (前の日に翌日の 2:00 まで記録できる)
 -- 2026-10-23 / 設計: docs/gymwork-alignment-design.md §3.5・計画: docs/training-day-implementation-plan.md §1 (細部はこちらが正)
 -- 適用方法: Supabase MCP apply_migration (name: v2_training_day) / supabase-cli は使わない。1 つのトランザクションで流れる (BEGIN／COMMIT は書かない)
--- 本番適用: 未
+-- 本番適用: 済 (2026-10-23 04:31 JST・本人「流して」。MCP apply_migration v2_training_day・version 20261022193108。本番に記録された SQL はこのファイルと md5 が一致 (ef52f9e7…))
 -- 戻し: supabase/rollback/0015_down.sql
 -- 確かめ: supabase/test/run.sh (docker。multiuser_test.sql の 11・checks.sql)
 --
