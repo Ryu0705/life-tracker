@@ -12,12 +12,13 @@ SELECT public.schedule_holiday_pattern_id() AS hol \gset
 -- ---------- 筋トレ (9: SET CONSTRAINTS の経路を search_path = '' で) ----------
 INSERT INTO public.routine (name) VALUES ('テストのルーティン') RETURNING id AS rt \gset
 INSERT INTO public.routine_exercise (routine_id, exercise_id, sort_order) VALUES (:'rt', :'ex', 1);
-INSERT INTO public.workout_session (started_at, routine_id) VALUES (now() - interval '1 hour', :'rt') RETURNING id AS sess \gset
+-- 時刻は今日の 9 時台に固定 (0015 の時刻の窓。now() だと 0 時台に流したとき前の日のセッションになり、日の一意の確かめが揺れる)
+INSERT INTO public.workout_session (started_at, routine_id) VALUES ((:'today'::date + time '09:00') AT TIME ZONE 'Asia/Tokyo', :'rt') RETURNING id AS sess \gset
 INSERT INTO public.workout_entry (session_id, exercise_id, sort_order) VALUES (:'sess', :'ex', 1) RETURNING id AS e1 \gset
 INSERT INTO public.workout_entry (session_id, exercise_id, sort_order) VALUES (:'sess', :'ex', 2) RETURNING id AS e2 \gset
-INSERT INTO public.workout_set (session_id, exercise_id, entry_id, set_index, reps, completed_at) VALUES (:'sess', :'ex', :'e1', 1, 10, now()) RETURNING id AS s1 \gset
-INSERT INTO public.workout_set (session_id, exercise_id, entry_id, set_index, reps, completed_at) VALUES (:'sess', :'ex', :'e1', 2, 8, now()) RETURNING id AS s2 \gset
-INSERT INTO public.workout_set (session_id, exercise_id, entry_id, set_index, reps, completed_at) VALUES (:'sess', :'ex', :'e2', 1, 5, now()) RETURNING id AS s3 \gset
+INSERT INTO public.workout_set (session_id, exercise_id, entry_id, set_index, reps, completed_at) VALUES (:'sess', :'ex', :'e1', 1, 10, (:'today'::date + time '09:10') AT TIME ZONE 'Asia/Tokyo') RETURNING id AS s1 \gset
+INSERT INTO public.workout_set (session_id, exercise_id, entry_id, set_index, reps, completed_at) VALUES (:'sess', :'ex', :'e1', 2, 8, (:'today'::date + time '09:12') AT TIME ZONE 'Asia/Tokyo') RETURNING id AS s2 \gset
+INSERT INTO public.workout_set (session_id, exercise_id, entry_id, set_index, reps, completed_at) VALUES (:'sess', :'ex', :'e2', 1, 5, (:'today'::date + time '09:14') AT TIME ZONE 'Asia/Tokyo') RETURNING id AS s3 \gset
 -- ✓ の取り消し・セットの削除 (残りの set_index が詰まる) → 種目の並べ替え → 最後のセットの削除 (種目ごと消え、順が詰まる)
 SELECT public.workout_set_delete(:'s1') \gset _
 SELECT test.ok((SELECT set_index FROM public.workout_set WHERE id = :'s2') = 1, 'workout_set_delete: set_index が詰まる');

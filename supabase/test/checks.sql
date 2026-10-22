@@ -1,4 +1,4 @@
--- 0014 の後の形の機械の確かめ (計画 §1-5 の 10・11)。読むだけの SELECT 1 つ
+-- 0014 の後の形の機械の確かめ (計画 §1-5 の 10・11)。0015 (トレーニングの日) の後の形も含む (「day:」の行)。読むだけの SELECT 1 つ
 -- docker: run.sh が流し、ok が f の行があれば止まる。本番: MCP の execute_sql にそのまま渡す (段階 3-2 の 5)
 -- 捨ての関数で既定の権限を見る確かめ (10 の 4 つ目の後半) は書き込みなので、ここには入れない (multiuser_test.sql の 10)
 WITH
@@ -93,7 +93,7 @@ checks AS (
   SELECT 'fn: 全関数が search_path = ''''', count(*) = 0, string_agg(sig, ',')
   FROM fn WHERE proconfig IS DISTINCT FROM '{"search_path=\"\""}'::text[]
   UNION ALL
-  SELECT 'fn: 29 個 (28 ＋ ensure_user_defaults)', count(*) = 29, count(*)::text FROM fn
+  SELECT 'fn: 31 個 (28 ＋ ensure_user_defaults ＋ 0015 のトリガー 2)', count(*) = 31, count(*)::text FROM fn
   UNION ALL
   SELECT 'fn: 同じ名前の重なりが 0', count(*) = 0, string_agg(proname, ',')
   FROM (SELECT pronamespace, proname FROM fn GROUP BY 1, 2 HAVING count(*) > 1) x
@@ -143,6 +143,41 @@ checks AS (
   WHERE c.connamespace = 'public'::regnamespace AND c.contype = 'f'
     AND c.confrelid NOT IN ('auth.users'::regclass, 'public.exercise'::regclass)
     AND NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attname = 'user_id' AND a.attnum = ANY (c.conkey))
+  -- 0015 トレーニングの日
+  UNION ALL
+  SELECT 'day: workout_session.day と workout_set.day が NOT NULL', count(*) = 2, string_agg(attrelid::regclass::text, ',')
+  FROM pg_attribute
+  WHERE attrelid IN ('public.workout_session'::regclass, 'public.workout_set'::regclass)
+    AND attname = 'day' AND attnotnull AND NOT attisdropped
+  UNION ALL
+  SELECT 'day: 時刻の窓の CHECK 2 つが有効', count(*) = 2, string_agg(conname, ',')
+  FROM pg_constraint
+  WHERE conname IN ('workout_session_day_window_chk', 'workout_set_day_window_chk') AND contype = 'c' AND convalidated
+  UNION ALL
+  SELECT 'day: 1 人 1 日 1 セッションの一意', count(*) = 1, NULL
+  FROM pg_constraint c
+  WHERE c.conrelid = 'public.workout_session'::regclass AND c.contype = 'u'
+    AND (SELECT array_agg(a.attname ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
+         JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) = '{user_id,day}'::name[]
+  UNION ALL
+  SELECT 'day: 進行中 1 件の一意 (workout_session_single_in_progress) が無い',
+         to_regclass('public.workout_session_single_in_progress') IS NULL, NULL
+  UNION ALL
+  SELECT 'day: セットの外部キーの組 (セッションは日まで・種目 1 回分はセッションまで)', count(*) = 2, string_agg(conname, ',')
+  FROM pg_constraint c
+  WHERE c.conrelid = 'public.workout_set'::regclass AND c.contype = 'f'
+    AND (c.conname, (SELECT array_agg(a.attname ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
+                     JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum))
+        IN (('workout_set_session_id_fkey', '{session_id,user_id,day}'::name[]),
+            ('workout_set_entry_fk', '{entry_id,session_id,exercise_id,user_id}'::name[]))
+  UNION ALL
+  SELECT 'day: day を埋めるトリガー 2 つが有効', count(*) = 2, string_agg(tgname, ',')
+  FROM pg_trigger
+  WHERE tgname IN ('workout_session_fill_day', 'workout_set_fill_day') AND NOT tgisinternal AND tgenabled = 'O'
+  UNION ALL
+  SELECT 'day: セットの日 = セッションの日', count(*) = 0, count(*)::text
+  FROM public.workout_set w JOIN public.workout_session s ON s.id = w.session_id
+  WHERE w.day <> s.day
   -- 行 (RLS を越える postgres で見る)
   UNION ALL
   SELECT 'row: user_id が NULL なのは exercise の共有の行だけ', count(*) = 0, string_agg(relname, ',')

@@ -4,8 +4,9 @@
 # 使い方（repo のどこからでも）:
 #   supabase/test/run.sh                    空の DB に stub → 0001〜最新 → plpgsql_check → multiuser_test.sql（あれば）
 #   supabase/test/run.sh --upto 0013        0013 まで流して止める（確かめの SQL は流さない）
-#   supabase/test/run.sh --rollback         0013 まで → 形の写し → 0014 → 戻しの SQL → 形の写し → 差分が 0
+#   supabase/test/run.sh --rollback [N]     N の前まで → 形の写し → N → rollback/N_down.sql → 形の写し → 差分が 0（N の既定は 0014）
 #   supabase/test/run.sh --dump <file>      本番の写し（pg_dump -Fc）を stub の上に戻し、--from（既定 0013）から流す（リハーサル）
+#                                           --from が 0013 なら「0013 の前の全部 = 0014 の後の本人」、それより後なら「流す前と後で表ごとの行数が同じ」を見る
 #   --owner <uuid>                          '__OWNER_UID__' をこの UID にし、auth.users に入れる（本番の写しのリハーサル用。UID は repo に書かない）
 #   --keep                                  終わっても container を残す（docker exec -it lt-pgtest psql -U postgres で見る）
 #
@@ -18,13 +19,14 @@ IMAGE=lt-pg17-check
 NAME=lt-pgtest
 OWNER=00000000-0000-4000-8000-00000000000a
 
-UPTO=""; FROM=""; DUMP=""; ROLLBACK=0; KEEP=0
+UPTO=""; FROM=""; DUMP=""; ROLLBACK=""; KEEP=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --upto) UPTO="$2"; shift 2 ;;
     --from) FROM="$2"; shift 2 ;;
     --dump) DUMP="$2"; shift 2 ;;
-    --rollback) ROLLBACK=1; shift ;;
+    --rollback)
+      if [[ "${2:-}" =~ ^[0-9]{4}$ ]]; then ROLLBACK="$2"; shift 2; else ROLLBACK=0014; shift; fi ;;
     --owner) OWNER="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -71,6 +73,19 @@ psql_file test/auth_stub.sql
 psql_c "INSERT INTO auth.users (id) VALUES ('$OWNER') ON CONFLICT DO NOTHING"
 
 if [ -n "$DUMP" ]; then
+  # 0014 の後の写しを戻す前に、本番を 0014 の後の形にそろえる (0013 から流すときはしない。0014 がするのを確かめる)
+  # - btree_gist: 睡眠の EXCLUDE が使う。写しは public と private だけで extensions を含まない
+  # - 既定の権限: 写しの GRANT は「持ち主だけ」からの差分で書かれるが、pg_restore が表・view・関数を作った時点で stub の既定の権限
+  #   (0014 の前の本番の形。anon・authenticated に ALL) が先に付き、写しの GRANT はそれを外さない (2026-10-23 の模擬の写しで、anon が表を読め、
+  #   authenticated が view に書けた)。public の既定の権限を空にしてから戻す (本番の既定の権限は写しの最後で戻る)。
+  #   グローバルの関数の行 (0014 の b2 の 1 行目) は --schema の写しに出ないので、ここで本番と同じにする
+  if [[ "$FROM" > "0014" ]]; then
+    psql_c "CREATE EXTENSION IF NOT EXISTS btree_gist WITH SCHEMA extensions"
+    psql_c "ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+            ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated, service_role;
+            ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated, service_role;
+            ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM anon, authenticated, service_role;"
+  fi
   echo "== restore $DUMP"
   docker cp "$DUMP" "$NAME:/tmp/prod.dump"
   # 本番の写しは public と private だけ。--schema で絞った写しは CREATE SCHEMA public を含むので、その 1 行を TOC から外して
@@ -86,19 +101,42 @@ for f in $MIGRATIONS; do
   n="${f%%_*}"
   if [ -n "$FROM" ] && [[ "$n" < "$FROM" ]]; then continue; fi
   # 0013 の直前の行数 (0014 の後に本人の行数と照らす。P11)
-  if [ "$n" = "0013" ] && [ "$ROLLBACK" = 0 ]; then counts > "$TMPD/counts-before.txt"; fi
-  if [ "$ROLLBACK" = 1 ] && [[ "$n" > "0013" ]]; then
+  if [ "$n" = "0013" ] && [ -z "$ROLLBACK" ]; then counts > "$TMPD/counts-before.txt"; fi
+  # 0014 より後から流すリハーサルは、流す前の行数 (後で表ごとに同じかを見る)
+  if [ -n "$DUMP" ] && [ "$n" = "$FROM" ] && [[ "$FROM" > "0013" ]]; then counts > "$TMPD/counts-same-before.txt"; fi
+  if [ -n "$ROLLBACK" ] && [ "$n" = "$ROLLBACK" ]; then
     schema_dump > "$TMPD/before.txt"
   fi
   psql_file "migrations/$f"
   if [ -n "$UPTO" ] && [ "$n" = "$UPTO" ]; then echo "== --upto $UPTO で止めた"; exit 0; fi
-  if [ "$ROLLBACK" = 1 ] && [ "$n" = "0014" ]; then
-    psql_file rollback/0014_down.sql
+  if [ -n "$ROLLBACK" ] && [ "$n" = "$ROLLBACK" ]; then
+    psql_file "rollback/${n}_down.sql"
     schema_dump > "$TMPD/after.txt"
     if diff -u "$TMPD/before.txt" "$TMPD/after.txt"; then echo "== 戻しの差分 0"; exit 0
     else echo "== 戻しの差分あり" >&2; exit 1; fi
   fi
 done
+if [ -n "$ROLLBACK" ]; then echo "== --rollback $ROLLBACK: migrations/${ROLLBACK}_*.sql が無い" >&2; exit 1; fi
+
+# 0014 より後から流したリハーサル: 表ごとの行数が流す前と同じ (列を足すだけの migration で行が増減していない)
+if [ -f "$TMPD/counts-same-before.txt" ]; then
+  echo "== 行数の照合 (流す前 = 流した後)"
+  counts > "$TMPD/counts-same-after.txt"
+  python3 -I - "$TMPD/counts-same-before.txt" "$TMPD/counts-same-after.txt" <<'PY'
+import sys
+before = {l.split('|')[0]: l.split('|')[1] for l in open(sys.argv[1]).read().split() if l}
+after = {l.split('|')[0]: l.split('|')[1] for l in open(sys.argv[2]).read().split() if l}
+bad = []
+for t in sorted(set(before) | set(after)):
+    line = f"{t}: before {before.get(t, '-')} / after {after.get(t, '-')}"
+    print(line)
+    if before.get(t) != after.get(t):
+        bad.append(t)
+if bad:
+    print("== 行数が合わない: " + ", ".join(bad), file=sys.stderr)
+    sys.exit(1)
+PY
+fi
 
 # 付け替えの前後の行数: 0013 の前の全部の行 = 0014 の後の本人の行 (exercise と、0013 で消した表を除く)
 if [ -f "$TMPD/counts-before.txt" ]; then
@@ -129,6 +167,7 @@ PY
 fi
 
 # plpgsql の関数を実行せずに検査する（関数の SET search_path を尊重する。SET CONSTRAINTS の名前は見ない・P7）
+# トリガーの関数は、付いている表を渡して検査する（NEW の列を見る。0015）
 echo "== plpgsql_check"
 psql_c "CREATE EXTENSION IF NOT EXISTS plpgsql_check WITH SCHEMA extensions"
 CHECK=$(psql_c "
@@ -137,6 +176,15 @@ CHECK=$(psql_c "
   CROSS JOIN LATERAL extensions.plpgsql_check_function_tb(p.oid) c
   WHERE p.prolang = (SELECT oid FROM pg_language WHERE lanname = 'plpgsql')
     AND p.prorettype <> 'trigger'::regtype
+    AND p.pronamespace IN ('public'::regnamespace, 'private'::regnamespace)
+    AND c.level = 'error'
+  UNION ALL
+  SELECT p.oid::regprocedure || ' on ' || t.tgrelid::regclass || ' ' || c.lineno || ': ' || c.message
+  FROM pg_trigger t
+  JOIN pg_proc p ON p.oid = t.tgfoid
+  CROSS JOIN LATERAL extensions.plpgsql_check_function_tb(p.oid, t.tgrelid) c
+  WHERE NOT t.tgisinternal
+    AND p.prolang = (SELECT oid FROM pg_language WHERE lanname = 'plpgsql')
     AND p.pronamespace IN ('public'::regnamespace, 'private'::regnamespace)
     AND c.level = 'error'")
 psql_c "DROP EXTENSION plpgsql_check"

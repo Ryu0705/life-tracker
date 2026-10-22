@@ -1,4 +1,4 @@
--- 人ごとのデータ・RLS・権限の確かめ (計画 §1-5 の 1〜10。docker で毎回全部流す。本番には流さない)
+-- 人ごとのデータ・RLS・権限の確かめ (計画 §1-5 の 1〜10。11 は 0015 のトレーニングの日。docker で毎回全部流す。本番には流さない)
 -- run.sh が 0014 と plpgsql_check の後に流す。この後に checks.sql (10 の残り・11) が続く
 -- 人: A・B (残す)、C (8 で作って消す)、本人 '__OWNER_UID__' (run.sh が auth_stub.sql の owner か --owner に置き換える)。人の切り替えは test.become (SET ROLE と request.jwt.claims。設計 §9)
 -- 失敗は test.ok / test.fails が例外にし、ON_ERROR_STOP で止まる。結果の行は捨て、見出しだけ出す
@@ -201,7 +201,8 @@ INSERT INTO public.day_meta (date) VALUES (:'today');
 INSERT INTO public.training_goal (weekly_target, effective_from) VALUES (2, date_trunc('week', :'today'::date)::date);
 INSERT INTO public.sleep_record (start_at, end_at)
 VALUES ((:'today'::date - 1 + time '23:30') AT TIME ZONE 'Asia/Tokyo', (:'today'::date + time '06:30') AT TIME ZONE 'Asia/Tokyo');
-INSERT INTO public.workout_session (started_at) VALUES (now());
+-- B のセッションは昨日の 20 時 (0015 の時刻の窓: 下の昨日のセットがこのセッションの日の中に入るように)
+INSERT INTO public.workout_session (started_at) VALUES ((:'today'::date - 1 + time '20:00') AT TIME ZONE 'Asia/Tokyo');
 INSERT INTO public.user_profile (sex, birth_date) VALUES ('female', DATE '1995-05-05');
 SELECT test.ok((SELECT count(*) FROM public.pattern WHERE apply_day = 'Holiday') = 1, 'B の休日パターン');
 SELECT test.ok((SELECT count(*) FROM public.category WHERE sub_input_kind IS NOT NULL) = 2, 'B のジムと睡眠');
@@ -210,7 +211,7 @@ SELECT id AS b_sess FROM public.workout_session WHERE ended_at IS NULL \gset
 SELECT id AS b_ex FROM public.exercise WHERE user_id IS NULL ORDER BY name LIMIT 1 \gset
 INSERT INTO public.workout_entry (session_id, exercise_id, sort_order) VALUES (:'b_sess', :'b_ex', 1) RETURNING id AS b_entry \gset
 INSERT INTO public.workout_set (session_id, exercise_id, entry_id, set_index, reps, completed_at)
-VALUES (:'b_sess', :'b_ex', :'b_entry', 1, 5, now() - interval '1 day');
+VALUES (:'b_sess', :'b_ex', :'b_entry', 1, 5, (:'today'::date - 1 + time '20:30') AT TIME ZONE 'Asia/Tokyo');
 SELECT test.ok((SELECT count(*) FROM public.workout_training_day) = 1, 'B の workout_training_day は昨日だけ');
 SELECT test.become(:'A');
 SELECT test.fails(format('INSERT INTO public.body_weight_record (recorded_on, weight_kg) VALUES (%L, 61)', :'today'), '23505', 'A の同じ日の体重');
@@ -221,7 +222,8 @@ SELECT test.fails($$INSERT INTO public.category (name, sub_input_kind) VALUES ('
 SELECT test.fails(format('INSERT INTO public.sleep_record (start_at, end_at) VALUES (%L::timestamptz, %L::timestamptz)',
                          (:'today'::date + time '01:00') AT TIME ZONE 'Asia/Tokyo', (:'today'::date + time '02:00') AT TIME ZONE 'Asia/Tokyo'),
                   '23P01', 'A の睡眠の重なり');
-SELECT test.fails('INSERT INTO public.workout_session (started_at) VALUES (now())', '23505', 'A の 2 つ目の進行中のセッション');
+SELECT test.fails(format('INSERT INTO public.workout_session (started_at) VALUES (%L::timestamptz)', (:'today'::date + time '10:00') AT TIME ZONE 'Asia/Tokyo'),
+                  '23505', 'A の同じ日の 2 つ目のセッション');
 SELECT test.ok((SELECT count(*) FROM public.workout_training_day) = 1
                AND NOT EXISTS (SELECT 1 FROM public.workout_training_day WHERE day = :'today'::date - 1), 'A の view に B の昨日が出ない');
 -- B のセットを A の entry に付けられない (workout_set_entry_fk の組。SQL レビュー S2)
@@ -303,6 +305,50 @@ SELECT test.ok(has_table_privilege('authenticated', 'public._probe_default_acl',
                AND NOT has_table_privilege('authenticated', 'public._probe_default_acl', 'TRUNCATE, REFERENCES, TRIGGER, MAINTAIN'),
                '新しい表は authenticated に読み書きだけ');
 ROLLBACK;
+
+\echo '== 11. トレーニングの日 (0015): 日はトリガーが埋める・前の日に翌日 2:00 まで・1 人 1 日 1 つ・日と種目 1 回分の食い違い'
+SELECT test.become(:'A');
+-- D = 10 日前 (A のほかのセッションと重ならない日)。D の 20:00 に始め、日を送らない → D
+SELECT (:'today'::date - 10) AS d \gset
+INSERT INTO public.workout_session (started_at) VALUES ((:'d'::date + time '20:00') AT TIME ZONE 'Asia/Tokyo') RETURNING id AS d_sess, day AS d_day \gset
+SELECT test.ok(:'d_day'::date = :'d'::date, 'セッションの日をトリガーが started_at の JST の日で埋める');
+INSERT INTO public.workout_entry (session_id, exercise_id, sort_order) VALUES (:'d_sess', :'ex', 1) RETURNING id AS d_entry \gset
+-- 翌日の 0:30 に D へ ✓ (日を送らない → セッションの日)。view は D を返し、D+1 は返さない
+INSERT INTO public.workout_set (session_id, exercise_id, entry_id, set_index, reps, completed_at)
+VALUES (:'d_sess', :'ex', :'d_entry', 1, 5, (:'d'::date + 1 + time '00:30') AT TIME ZONE 'Asia/Tokyo') RETURNING day AS d_set_day \gset
+SELECT test.ok(:'d_set_day'::date = :'d'::date, 'セットの日をトリガーがセッションの日で埋める');
+SELECT test.ok(EXISTS (SELECT 1 FROM public.workout_training_day WHERE day = :'d'::date)
+               AND NOT EXISTS (SELECT 1 FROM public.workout_training_day WHERE day = :'d'::date + 1), '0:30 のセットは前の日として view に出る');
+-- セットの窓: 翌日 1:59:59 は通り、翌日 2:00 ちょうどと D の 0:00 より前は 23514
+INSERT INTO public.workout_set (session_id, exercise_id, entry_id, set_index, reps, completed_at)
+VALUES (:'d_sess', :'ex', :'d_entry', 2, 5, (:'d'::date + 1 + time '01:59:59') AT TIME ZONE 'Asia/Tokyo');
+SELECT test.fails(format('INSERT INTO public.workout_set (session_id, exercise_id, entry_id, set_index, reps, completed_at) VALUES (%L, %L, %L, 3, 5, %L::timestamptz)',
+                         :'d_sess', :'ex', :'d_entry', (:'d'::date + 1 + time '02:00') AT TIME ZONE 'Asia/Tokyo'), '23514', '翌日 2:00 のセット');
+SELECT test.fails(format('INSERT INTO public.workout_set (session_id, exercise_id, entry_id, set_index, reps, completed_at) VALUES (%L, %L, %L, 3, 5, %L::timestamptz)',
+                         :'d_sess', :'ex', :'d_entry', ((:'d'::date + time '00:00') AT TIME ZONE 'Asia/Tokyo') - interval '1 second'), '23514', 'D の 0:00 より前のセット');
+-- セッションの窓: 前の日 (D-1) を送って D の 1:59 に始めるのは通り (送った日は変えない)、D-2 を送って D-1 の 2:00 に始めるのは 23514
+INSERT INTO public.workout_session (day, started_at) VALUES (:'d'::date - 1, (:'d'::date + time '01:59') AT TIME ZONE 'Asia/Tokyo') RETURNING id AS p_sess, day AS p_day \gset
+SELECT test.ok(:'p_day'::date = :'d'::date - 1, '送った日はトリガーが変えない');
+SELECT test.fails(format('INSERT INTO public.workout_session (day, started_at) VALUES (%L, %L::timestamptz)',
+                         :'d'::date - 2, (:'d'::date - 1 + time '02:00') AT TIME ZONE 'Asia/Tokyo'), '23514', '翌日 2:00 に始める前の日のセッション');
+-- 1 人 1 日 1 つ。前の日と今日は同時に開いていてよい
+SELECT test.fails(format('INSERT INTO public.workout_session (started_at) VALUES (%L::timestamptz)', (:'d'::date + time '22:00') AT TIME ZONE 'Asia/Tokyo'),
+                  '23505', '同じ日の 2 つ目のセッション');
+SELECT test.ok((SELECT count(*) FROM public.workout_session WHERE ended_at IS NULL AND id IN (:'d_sess', :'p_sess')) = 2, '前の日と今日のセッションが同時に開いている');
+-- 食い違い: セットの日 ≠ セッションの日・前の日のセッションのセットを D の種目 1 回分に付ける → 外部キーで 23503 (どちらも窓の中の時刻)
+SELECT test.fails(format('INSERT INTO public.workout_set (session_id, exercise_id, entry_id, set_index, reps, completed_at, day) VALUES (%L, %L, %L, 3, 5, %L::timestamptz, %L)',
+                         :'d_sess', :'ex', :'d_entry', (:'d'::date + time '01:00') AT TIME ZONE 'Asia/Tokyo', :'d'::date - 1), '23503', 'セットの日がセッションの日と違う');
+SELECT test.fails(format('INSERT INTO public.workout_set (session_id, exercise_id, entry_id, set_index, reps, completed_at) VALUES (%L, %L, %L, 3, 5, %L::timestamptz)',
+                         :'p_sess', :'ex', :'d_entry', (:'d'::date + time '01:00') AT TIME ZONE 'Asia/Tokyo'), '23503', '別の日のセッションのセットを D の種目 1 回分に付ける');
+-- B は A のセッションの日を読めない (トリガーは呼んだ人の権限) → 日が埋まらず 23502
+SELECT test.become(:'B');
+SELECT test.fails(format('INSERT INTO public.workout_set (session_id, exercise_id, entry_id, set_index, reps, completed_at) VALUES (%L, %L, %L, 9, 1, %L::timestamptz)',
+                         :'d_sess', :'ex', :'d_entry', (:'d'::date + time '21:00') AT TIME ZONE 'Asia/Tokyo'), '23502', 'B のセットを A のセッションに付ける');
+-- postgres (MCP の手入力) でも日が埋まる
+SELECT test.reset();
+INSERT INTO public.workout_set (session_id, exercise_id, entry_id, set_index, reps, completed_at, user_id)
+VALUES (:'d_sess', :'ex', :'d_entry', 3, 5, (:'d'::date + time '21:00') AT TIME ZONE 'Asia/Tokyo', :'A') RETURNING day AS pg_set_day \gset
+SELECT test.ok(:'pg_set_day'::date = :'d'::date, 'postgres の書き込みでも日が埋まる');
 
 -- 後片付け (A・B の行は残す。checks.sql が「user_id が NULL なのは共有の種目だけ」を見る)
 SET client_min_messages = warning;
